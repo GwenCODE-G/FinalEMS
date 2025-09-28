@@ -179,24 +179,21 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
 
   const getWorkTypeBadge = (workType) => {
     return workType === 'Full-Time' 
-      ? 'bg-blue-100 text-blue-800'
-      : 'bg-purple-100 text-purple-800';
+      ? 'bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full'
+      : 'bg-purple-100 text-purple-800 text-xs px-2 py-1 rounded-full';
   };
 
-  // Calculate work days for display
-  const getWorkDaysDisplay = (workDays) => {
-    if (!workDays) return 'Not Set';
-    
-    const days = [];
-    if (workDays.Monday) days.push('Mon');
-    if (workDays.Tuesday) days.push('Tue');
-    if (workDays.Wednesday) days.push('Wed');
-    if (workDays.Thursday) days.push('Thu');
-    if (workDays.Friday) days.push('Fri');
-    if (workDays.Saturday) days.push('Sat');
-    if (workDays.Sunday) days.push('Sun');
-    
-    return days.length > 0 ? days.join(', ') : 'No days set';
+  const getStatusBadge = (status) => {
+    return status === 'Active'
+      ? 'bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full'
+      : 'bg-gray-100 text-gray-800 text-xs px-2 py-1 rounded-full';
+  };
+
+  const getRfidBadge = (rfidUid, isAssigned) => {
+    if (!rfidUid || !isAssigned) {
+      return 'bg-gray-100 text-gray-600 text-xs px-2 py-1 rounded-full';
+    }
+    return 'bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full';
   };
 
   // Preload default avatar to prevent flickering
@@ -241,7 +238,7 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
   }
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-4 p-4">
       {/* Success Message */}
       {showSuccess && (
         <div className="fixed top-4 right-4 z-50 animate-fade-in">
@@ -271,8 +268,8 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
       {/* Header Section */}
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
         <div>
-          <h1 className="text-2xl lg:text-3xl font-bold text-[#400504]">Employee Management</h1>
-          <p className="text-gray-600 mt-1">Manage all employee records and information</p>
+          <h1 className="text-xl lg:text-2xl font-bold text-[#400504]">Employee Management</h1>
+          <p className="text-gray-600 text-sm">Manage all employee records and information</p>
         </div>
         
         <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
@@ -286,7 +283,7 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
             <input
               type="text"
               placeholder="Search employees..."
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
+              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors text-sm"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
@@ -296,21 +293,21 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
           <div className="flex gap-2">
             <button
               onClick={onViewDepartment}
-              className="flex items-center px-4 py-2 bg-white text-[#400504] border border-[#400504] rounded-lg hover:bg-gray-50 transition-colors font-medium"
+              className="flex items-center px-3 py-2 bg-white text-[#400504] border border-[#400504] rounded-lg hover:bg-gray-50 transition-colors font-medium text-sm"
             >
               <BuildingOfficeIcon className="h-4 w-4 mr-2" />
-              View Departments
+              Departments
             </button>
             <button
               onClick={onAddEmployee}
-              className="flex items-center px-4 py-2 bg-[#cba235] text-[#400504] rounded-lg hover:bg-[#dbb545] transition-colors font-medium"
+              className="flex items-center px-3 py-2 bg-[#cba235] text-[#400504] rounded-lg hover:bg-[#dbb545] transition-colors font-medium text-sm"
             >
               <PlusIcon className="h-4 w-4 mr-2" />
               Add Employee
             </button>
             <button
               onClick={fetchEmployees}
-              className="flex items-center px-4 py-2 bg-gray-100 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-200 transition-colors font-medium"
+              className="flex items-center px-3 py-2 bg-gray-100 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-200 transition-colors font-medium text-sm"
               title="Refresh"
             >
               <ArrowPathIcon className="h-4 w-4" />
@@ -324,18 +321,18 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
         <nav className="-mb-px flex space-x-8">
           <button
             onClick={() => setActiveTab('active')}
-            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+            className={`py-2 px-1 border-b-2 font-medium text-xs ${
               activeTab === 'active'
                 ? 'border-[#cba235] text-[#400504]'
                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
             }`}
           >
             <UserGroupIcon className="h-4 w-4 inline mr-2" />
-            Active Employees ({activeEmployees.length})
+            Active ({activeEmployees.length})
           </button>
           <button
             onClick={() => setActiveTab('archived')}
-            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+            className={`py-2 px-1 border-b-2 font-medium text-xs ${
               activeTab === 'archived'
                 ? 'border-[#cba235] text-[#400504]'
                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
@@ -347,86 +344,86 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
         </nav>
       </div>
 
-      {/* Statistics Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+      {/* Statistics Cards - Compact Version */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm">
           <div className="flex items-center">
             <div className="p-2 bg-blue-100 rounded-lg">
-              <UserGroupIcon className="h-6 w-6 text-blue-600" />
+              <UserGroupIcon className="h-5 w-5 text-blue-600" />
             </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Total Employees</p>
-              <p className="text-2xl font-bold text-gray-900">{employees.length}</p>
+            <div className="ml-3">
+              <p className="text-xs font-medium text-gray-600">Total</p>
+              <p className="text-lg font-bold text-gray-900">{employees.length}</p>
             </div>
           </div>
         </div>
         
-        <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+        <div className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm">
           <div className="flex items-center">
             <div className="p-2 bg-green-100 rounded-lg">
-              <svg className="h-6 w-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="h-5 w-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Active</p>
-              <p className="text-2xl font-bold text-gray-900">{activeEmployees.length}</p>
+            <div className="ml-3">
+              <p className="text-xs font-medium text-gray-600">Active</p>
+              <p className="text-lg font-bold text-gray-900">{activeEmployees.length}</p>
             </div>
           </div>
         </div>
         
-        <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+        <div className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm">
           <div className="flex items-center">
             <div className="p-2 bg-purple-100 rounded-lg">
-              <svg className="h-6 w-6 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="h-5 w-5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.132A8 8 0 008 4.07M3 15.364c.64-1.319 1-2.8 1-4.364 0-1.457.39-2.823 1.07-4" />
               </svg>
             </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">RFID Assigned</p>
-              <p className="text-2xl font-bold text-gray-900">{rfidAssigned}</p>
+            <div className="ml-3">
+              <p className="text-xs font-medium text-gray-600">RFID</p>
+              <p className="text-lg font-bold text-gray-900">{rfidAssigned}</p>
             </div>
           </div>
         </div>
         
-        <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+        <div className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm">
           <div className="flex items-center">
             <div className="p-2 bg-gray-100 rounded-lg">
-              <ArchiveBoxIcon className="h-6 w-6 text-gray-600" />
+              <ArchiveBoxIcon className="h-5 w-5 text-gray-600" />
             </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Archived</p>
-              <p className="text-2xl font-bold text-gray-900">{archivedEmployees.length}</p>
+            <div className="ml-3">
+              <p className="text-xs font-medium text-gray-600">Archived</p>
+              <p className="text-lg font-bold text-gray-900">{archivedEmployees.length}</p>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Employees Table */}
+      {/* Compact Employees Table */}
       <div className="bg-white rounded-lg shadow-sm border overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
+          <table className="min-w-full divide-y divide-gray-200 text-sm">
             <thead className="bg-[#400504]">
               <tr>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
+                <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider">
                   Employee
                 </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
-                  ID & Contact
+                <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider">
+                  Department
                 </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
-                  Department & Position
+                <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider">
+                  Position
                 </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
-                  Work Details
+                <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider">
+                  Work Type
                 </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
-                  RFID Status
+                <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider">
+                  RFID
                 </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
+                <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider">
                   Status
                 </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
+                <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider">
                   Actions
                 </th>
               </tr>
@@ -436,91 +433,72 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
                 filteredEmployees.map((employee) => (
                   <tr key={employee._id} className="hover:bg-gray-50 transition-colors">
                     {/* Employee Profile Column */}
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-3 py-2 whitespace-nowrap">
                       <div className="flex items-center">
-                        <div className="flex-shrink-0 h-12 w-12">
+                        <div className="flex-shrink-0 h-8 w-8">
                           <img
                             src={getProfileImageUrl(employee.profilePicture, employee._id)}
                             alt={`${employee.firstName} ${employee.lastName}`}
-                            className="h-12 w-12 rounded-full object-cover border-2 border-[#cba235] bg-gray-200"
+                            className="h-8 w-8 rounded-full object-cover border border-[#cba235] bg-gray-200"
                             onError={(e) => handleImageError(e, employee._id)}
                             loading="lazy"
                             decoding="async"
                           />
                         </div>
-                        <div className="ml-4">
+                        <div className="ml-3">
                           <div className="text-sm font-medium text-gray-900">
-                            {employee.firstName} {employee.middleName ? employee.middleName + ' ' : ''}{employee.lastName}
+                            {employee.firstName} {employee.lastName}
                           </div>
-                          <div className="text-sm text-gray-500 capitalize">{employee.gender}</div>
-                          <div className="text-xs text-gray-400">
-                            {employee.birthday ? new Date(employee.birthday).toLocaleDateString() : 'No birthday set'}
+                          <div className="text-xs text-gray-500 font-mono">
+                            {employee.employeeId}
+                          </div>
+                          <div className="text-xs text-gray-400 truncate max-w-[120px]">
+                            {employee.email}
                           </div>
                         </div>
                       </div>
                     </td>
 
-                    {/* ID & Contact Column */}
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900 font-mono">{employee.employeeId}</div>
-                      <div className="text-sm text-gray-500 truncate max-w-xs">{employee.email}</div>
-                      <div className="text-sm text-gray-500">{employee.contactNumber}</div>
+                    {/* Department Column */}
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">{employee.department}</div>
                     </td>
 
-                    {/* Department & Position Column */}
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-900">{employee.department}</div>
-                      <div className="text-sm text-gray-500">{employee.position}</div>
+                    {/* Position Column */}
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">{employee.position}</div>
                       {employee.teachingLevel && employee.teachingLevel.length > 0 && (
-                        <div className="text-xs text-gray-400 mt-1">
-                          Levels: {employee.teachingLevel.join(', ')}
+                        <div className="text-xs text-gray-500 mt-1">
+                          {employee.teachingLevel.slice(0, 2).join(', ')}
+                          {employee.teachingLevel.length > 2 && '...'}
                         </div>
                       )}
                     </td>
 
-                    {/* Work Details Column */}
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getWorkTypeBadge(employee.workType)}`}>
+                    {/* Work Type Column */}
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <span className={getWorkTypeBadge(employee.workType)}>
                         {employee.workType}
                       </span>
-                      <div className="text-xs text-gray-500 mt-1">
-                        Age: {employee.age || 'N/A'}
-                      </div>
-                      <div className="text-xs text-gray-400 mt-1">
-                        Days: {getWorkDaysDisplay(employee.workDays)}
-                      </div>
                     </td>
 
-                    {/* RFID Status Column */}
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex flex-col gap-1">
-                        <span className={`inline-flex px-2 py-1 text-xs font-mono rounded ${
-                          employee.rfidUid ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
-                        }`}>
-                          {formatRfidUid(employee.rfidUid)}
-                        </span>
-                        <span className={`text-xs ${
-                          employee.isRfidAssigned ? 'text-green-600' : 'text-gray-500'
-                        }`}>
-                          {employee.isRfidAssigned ? 'Assigned' : 'Not Assigned'}
-                        </span>
-                      </div>
+                    {/* RFID Column */}
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <span className={getRfidBadge(employee.rfidUid, employee.isRfidAssigned)}>
+                        {employee.rfidUid ? formatRfidUid(employee.rfidUid) : 'Not Assigned'}
+                      </span>
                     </td>
 
                     {/* Status Column */}
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                        employee.status === 'Active'
-                          ? 'bg-green-100 text-green-800'
-                          : 'bg-gray-100 text-gray-800'
-                      }`}>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <span className={getStatusBadge(employee.status)}>
                         {employee.status}
                       </span>
                     </td>
 
                     {/* Actions Column */}
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                      <div className="flex items-center space-x-2">
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <div className="flex items-center space-x-1">
                         <button 
                           onClick={() => handleViewEmployee(employee)}
                           className="text-blue-600 hover:text-blue-900 p-1 rounded transition-colors"
@@ -552,17 +530,17 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
                 ))
               ) : (
                 <tr>
-                  <td colSpan="7" className="px-6 py-12 text-center">
+                  <td colSpan="7" className="px-6 py-8 text-center">
                     <div className="flex flex-col items-center justify-center">
-                      <svg className="h-16 w-16 text-gray-400 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <svg className="h-12 w-12 text-gray-400 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
-                      <h3 className="text-lg font-medium text-gray-900 mb-2">
+                      <h3 className="text-base font-medium text-gray-900 mb-1">
                         {searchTerm ? 'No employees found' : `No ${activeTab} employees`}
                       </h3>
-                      <p className="text-gray-500 mb-4">
+                      <p className="text-gray-500 text-sm mb-3">
                         {searchTerm 
-                          ? 'Try adjusting your search terms or filters'
+                          ? 'Try adjusting your search terms'
                           : activeTab === 'active' 
                             ? 'Get started by adding your first employee'
                             : 'No archived employees found'
@@ -571,7 +549,7 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
                       {!searchTerm && activeTab === 'active' && (
                         <button
                           onClick={onAddEmployee}
-                          className="inline-flex items-center px-4 py-2 bg-[#cba235] text-[#400504] rounded-lg hover:bg-[#dbb545] transition-colors font-medium"
+                          className="inline-flex items-center px-3 py-2 bg-[#cba235] text-[#400504] rounded-lg hover:bg-[#dbb545] transition-colors font-medium text-sm"
                         >
                           <PlusIcon className="h-4 w-4 mr-2" />
                           Add First Employee
@@ -587,8 +565,8 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
 
         {/* Table Footer */}
         {filteredEmployees.length > 0 && (
-          <div className="px-6 py-3 bg-gray-50 border-t border-gray-200">
-            <div className="flex justify-between items-center text-sm text-gray-600">
+          <div className="px-4 py-2 bg-gray-50 border-t border-gray-200">
+            <div className="flex justify-between items-center text-xs text-gray-600">
               <span>
                 Showing {filteredEmployees.length} of {activeTab === 'active' ? activeEmployees.length : archivedEmployees.length} {activeTab} employees
               </span>

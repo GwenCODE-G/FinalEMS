@@ -69,11 +69,22 @@ const AddEmp = ({ onCancel }) => {
 
   const fetchDepartments = useCallback(async () => {
     try {
-      const response = await fetch('http://localhost:5000/api/departments');
-      const data = await response.json();
-      setDepartments(data);
+      const token = localStorage.getItem('ems_token');
+      const response = await fetch('http://localhost:5000/api/departments', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setDepartments(data);
+      } else {
+        console.error('Failed to fetch departments');
+        setDepartments([]);
+      }
     } catch (error) {
       console.error('Error fetching departments:', error);
+      setDepartments([]);
     }
   }, []);
 
@@ -254,6 +265,7 @@ const AddEmp = ({ onCancel }) => {
     if (!validateStep(4)) return;
     
     try {
+      const token = localStorage.getItem('ems_token');
       const formDataToSend = new FormData();
       
       Object.keys(formData).forEach(key => {
@@ -268,6 +280,9 @@ const AddEmp = ({ onCancel }) => {
 
       const response = await fetch('http://localhost:5000/api/employees', {
         method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
         body: formDataToSend
       });
 
@@ -275,7 +290,8 @@ const AddEmp = ({ onCancel }) => {
         alert('Employee added successfully!');
         onCancel();
       } else {
-        alert('Error adding employee');
+        const errorData = await response.json();
+        alert(errorData.message || 'Error adding employee');
       }
     } catch (error) {
       console.error('Error:', error);

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { } from 'react';
 
 const EmploymentDetails = ({ 
   formData, 
@@ -20,46 +20,74 @@ const EmploymentDetails = ({
     Sunday: { active: false, start: '', end: '' }
   };
 
+  // Ensure departments is always an array with proper handling
+  const departmentsList = Array.isArray(departments) ? departments : [];
+  
+  // Ensure positions is always an array
+  const positionsList = Array.isArray(positions) ? positions : [];
+
   return (
     <div className="space-y-4">
       <h3 className="text-lg font-medium text-[#400504]">Employment Details</h3>
       
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Department Field */}
         <div>
           <label className="block text-sm font-medium text-gray-700">Department *</label>
           <select
             name="department"
             value={formData.department || ''}
             onChange={handleInputChange}
-            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+            className={`mt-1 block w-full border rounded-md shadow-sm p-2 ${
+              errors.department ? 'border-red-500' : 'border-gray-300'
+            }`}
             required
           >
             <option value="">Select Department</option>
-            {departments.map(dept => (
-              <option key={dept._id} value={dept.name}>{dept.name}</option>
-            ))}
+            {departmentsList.length > 0 ? (
+              departmentsList.map(dept => (
+                <option key={dept._id || dept.name} value={dept.name}>
+                  {dept.name}
+                </option>
+              ))
+            ) : (
+              <option value="" disabled>Loading departments...</option>
+            )}
           </select>
           {errors.department && <p className="text-red-500 text-xs mt-1">{errors.department}</p>}
+          {departmentsList.length === 0 && (
+            <p className="text-yellow-600 text-xs mt-1">No departments available. Please add departments first.</p>
+          )}
         </div>
         
+        {/* Position Field */}
         <div>
           <label className="block text-sm font-medium text-gray-700">Position *</label>
           <select
             name="position"
             value={formData.position || ''}
             onChange={handleInputChange}
-            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+            className={`mt-1 block w-full border rounded-md shadow-sm p-2 ${
+              errors.position ? 'border-red-500' : 'border-gray-300'
+            }`}
             required
           >
             <option value="">Select Position</option>
-            {positions.map(pos => (
-              <option key={pos} value={pos}>{pos}</option>
-            ))}
+            {positionsList.length > 0 ? (
+              positionsList.map((pos, index) => (
+                <option key={index} value={pos}>
+                  {pos}
+                </option>
+              ))
+            ) : (
+              <option value="" disabled>No positions available</option>
+            )}
           </select>
           {errors.position && <p className="text-red-500 text-xs mt-1">{errors.position}</p>}
         </div>
       </div>
       
+      {/* Teaching Level (only for Academic Teachers) */}
       {formData.department === 'Academic' && formData.position === 'Teacher' && (
         <div>
           <label className="block text-sm font-medium text-gray-700">Teaching Level</label>
@@ -70,7 +98,7 @@ const EmploymentDetails = ({
                   type="checkbox"
                   name="teachingLevel"
                   value={level}
-                  checked={formData.teachingLevel?.includes(level) || false}
+                  checked={Array.isArray(formData.teachingLevel) && formData.teachingLevel.includes(level)}
                   onChange={handleInputChange}
                   className="h-4 w-4 text-[#400504] focus:ring-[#400504] border-gray-300 rounded"
                 />
@@ -81,13 +109,16 @@ const EmploymentDetails = ({
         </div>
       )}
       
+      {/* Work Type */}
       <div>
         <label className="block text-sm font-medium text-gray-700">Type of Work *</label>
         <select
           name="workType"
           value={formData.workType || ''}
           onChange={handleInputChange}
-          className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+          className={`mt-1 block w-full border rounded-md shadow-sm p-2 ${
+            errors.workType ? 'border-red-500' : 'border-gray-300'
+          }`}
           required
         >
           <option value="">Select Work Type</option>
@@ -97,6 +128,7 @@ const EmploymentDetails = ({
         {errors.workType && <p className="text-red-500 text-xs mt-1">{errors.workType}</p>}
       </div>
       
+      {/* Work Schedule */}
       <div>
         <label className="block text-sm font-medium text-gray-700">Work Schedule *</label>
         {errors.workSchedule && <p className="text-red-500 text-xs mt-1">{errors.workSchedule}</p>}
@@ -133,6 +165,7 @@ const EmploymentDetails = ({
         </div>
       </div>
       
+      {/* Employee ID Display */}
       <div>
         <label className="block text-sm font-medium text-gray-700">Employee ID</label>
         <input

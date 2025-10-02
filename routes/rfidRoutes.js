@@ -1,7 +1,8 @@
-const express = require('express');
+import express from 'express';
+import Employee from '../models/Employee.js';
+import Attendance from '../models/Attendance.js';
+
 const router = express.Router();
-const Employee = require('../models/Employee');
-const Attendance = require('../models/Attendance');
 
 const formatRfidUid = (uid) => {
   if (!uid) return null;
@@ -84,11 +85,13 @@ const determineAttendanceStatus = (timeIn, timeOut, isWorkDay, lateMinutes, hour
   return 'Present';
 };
 
-// Enhanced RFID Scan Endpoint
+// Enhanced RFID Scan Endpoint with better debugging
 router.post('/scan', async (req, res) => {
   try {
-    console.log('=== RFID Scan Request ===');
-    console.log('Received UID:', req.body.uid);
+    console.log('=== RFID Scan Request Received ===');
+    console.log('Headers:', req.headers);
+    console.log('Body:', req.body);
+    console.log('URL:', req.originalUrl);
     
     const { uid } = req.body;
     
@@ -506,4 +509,204 @@ router.get('/status', async (req, res) => {
   }
 });
 
-module.exports = router;
+// Get Today's Attendance Summary
+router.get('/summary/today', async (req, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    // Get all attendance records for today
+    const todayAttendance = await Attendance.find({
+      date: {
+        $gte: today,
+        $lt: tomorrow
+      }
+    });
+    
+    // Get total active employees
+    const totalEmployees = await Employee.countDocuments({ status: 'Active' });
+    
+    // Calculate summary statistics
+    let present = 0;
+    let absent = 0;
+    let completed = 0;
+    let late = 0;
+    
+    todayAttendance.forEach(record => {
+      if (record.status === 'Present' || record.status === 'Late') {
+        present++;
+        if (record.status === 'Late') {
+          late++;
+        }
+      } else if (record.status === 'Completed') {
+        completed++;
+        present++; // Completed employees are also present
+      } else if (record.status === 'Absent') {
+        absent++;
+      }
+      // Note: 'No Work' and 'Half-day' are not counted in these basic stats
+    });
+    
+    // Calculate absent employees (total active - present)
+    // This accounts for employees who haven't scanned in yet
+    const actualAbsent = totalEmployees - present;
+    
+    res.json({
+      summary: {
+        present: present,
+        absent: actualAbsent > 0 ? actualAbsent : absent,
+        completed: completed,
+        late: late,
+        totalEmployees: totalEmployees
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Attendance summary error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Alternative: Get comprehensive summary with more details
+router.get('/summary/detailed', async (req, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    // Get all attendance records for today
+    const todayAttendance = await Attendance.find({
+      date: {
+        $gte: today,
+        $lt: tomorrow
+      }
+    });
+    
+    // Get all active employees
+    const activeEmployees = await Employee.find({ status: 'Active' });
+    const totalEmployees = activeEmployees.length;
+    
+    // Initialize counters
+    let present = 0;
+    let absent = 0;
+    let completed = 0;
+    let late = 0;
+    let halfDay = 0;
+    let noWork = 0;
+    
+    // Count from attendance records
+    todayAttendance.forEach(record => {
+      switch (record.status) {
+        case 'Present':
+          present++;
+          break;
+        case 'Late':
+          present++;
+          late++;
+          break;
+        case 'Completed':
+          present++;
+          completed++;
+          break;
+        case 'Half-day':
+          present++;
+          halfDay++;
+          break;
+        case 'No Work':
+          noWork++;
+          break;
+        case 'Absent':
+          absent++;
+          break;
+      }
+    });
+    
+    // Calculate employees who haven't scanned in (true absent)
+    const employeesWithAttendance = todayAttendance.map(record => record.employeeId);
+    const employeesWithoutAttendance = activeEmployees.filter(emp => 
+      !employeesWithAttendance.includes(emp.employeeId)
+    );
+    
+    // For employees without attendance records, check if they should be working today
+    let shouldBeWorking = 0;
+    employeesWithoutAttendance.forEach(employee => {
+      const { isWorkDay } = getWorkScheduleForDay(employee, today);
+      if (isWorkDay) {
+        shouldBeWorking++;
+      }
+    });
+    
+    const actualAbsent = shouldBeWorking;
+
+    res.json({
+      summary: {
+        present: present,
+        absent: actualAbsent,
+        completed: completed,
+        late: late,
+        halfDay: halfDay,
+        noWork: noWork,
+        totalEmployees: totalEmployees,
+        scannedToday: todayAttendance.length,
+        pendingScan: actualAbsent
+      },
+      breakdown: {
+        byStatus: {
+          present: present,
+          late: late,
+          completed: completed,
+          halfDay: halfDay,
+          absent: actualAbsent,
+          noWork: noWork
+        }
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Detailed attendance summary error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.get('/attendance/monthly-summary/:employeeId', async (req, res) => {
+  try {
+    const { employeeId } = req.params;
+    const { year, month } = req.query;
+    
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 0);
+    
+    const attendance = await Attendance.find({
+      employeeId: employeeId,
+      date: { $gte: startDate, $lte: endDate }
+    });
+    
+    // Calculate monthly summary
+    const summary = {
+      year: parseInt(year),
+      month: parseInt(month),
+      totalDays: endDate.getDate(),
+      presentDays: attendance.filter(a => a.status === 'Present' || a.status === 'Completed').length,
+      absentDays: attendance.filter(a => a.status === 'Absent').length,
+      lateDays: attendance.filter(a => a.status === 'Late').length,
+      totalHours: attendance.reduce((sum, a) => sum + (a.hoursWorked || 0), 0),
+      averageHours: 0
+    };
+    
+    summary.averageHours = summary.presentDays > 0 ? (summary.totalHours / summary.presentDays).toFixed(2) : 0;
+    
+    res.json(summary);
+  } catch (error) {
+    console.error('Monthly summary error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+export default router;

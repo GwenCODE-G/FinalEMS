@@ -1,26 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { 
-  FaUserTimes, 
-  FaIdCard, 
-  FaArchive, 
-  FaEye,
-  FaSearch,
-  FaFilter,
-  FaSync,
-  FaClock,
-  FaSignOutAlt,
-  FaServer,
-  FaPlug,
-  FaChartBar,
-  FaDesktop,
-  FaTimes,
-  FaCalendar,
-  FaUserClock,
-  FaBusinessTime,
-  FaEdit,
-  FaCheckCircle,
-  FaExclamationTriangle
+  FaUserTimes, FaIdCard, FaArchive, FaEye, FaSearch, FaFilter, FaSync, 
+  FaClock, FaSignOutAlt, FaServer, FaPlug, FaChartBar, FaDesktop, 
+  FaTimes, FaCalendar, FaUserClock, FaBusinessTime, 
+  FaCheckCircle, FaExclamationTriangle, FaHistory, FaInfoCircle
 } from 'react-icons/fa';
 
 const PORTS_TO_TRY = [5000, 5001, 3001, 3000, 8080];
@@ -28,7 +12,7 @@ let cachedBaseUrl = null;
 
 const testBackendConnection = async (port) => {
   try {
-    const response = await axios.get(`http://localhost:${port}/api/test`, {
+    const response = await axios.get(`http://localhost:${port}/api/test-auth`, {
       timeout: 5000
     });
     return { success: true, port, data: response.data };
@@ -101,9 +85,6 @@ function Attendance() {
   const [filteredEmployees, setFilteredEmployees] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-  const [rfidModal, setRfidModal] = useState({ isOpen: false, employee: null, rfidUid: '' });
-  const [viewModal, setViewModal] = useState({ isOpen: false, employee: null });
-  const [manualModal, setManualModal] = useState({ isOpen: false, employee: null, action: 'timein', time: '' });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [apiBaseUrl, setApiBaseUrl] = useState('');
@@ -116,6 +97,23 @@ function Attendance() {
   const [todaySummary, setTodaySummary] = useState(null);
   const [successMessage, setSuccessMessage] = useState('');
   const [showSuccess, setShowSuccess] = useState(false);
+
+  // RFID Assignment States
+  const [rfidAssignment, setRfidAssignment] = useState({
+    isOpen: false,
+    employee: null,
+    mode: 'scan', // 'scan', 'confirm', 'remove', 'manual'
+    scannedUid: '',
+    existingAssignment: null,
+    removalReason: '',
+    otherReason: '',
+    action: 'timein',
+    time: ''
+  });
+
+  const [activityLogs, setActivityLogs] = useState([]);
+  const [logsModal, setLogsModal] = useState({ isOpen: false });
+  const [viewModal, setViewModal] = useState({ isOpen: false, employee: null });
 
   const realTimeUpdates = useRealTimeUpdates(apiBaseUrl);
 
@@ -188,8 +186,8 @@ function Attendance() {
         `${baseUrl}/api/rfid/attendance?startDate=${date}&endDate=${date}`,
         { timeout: 10000 }
       );
-      console.log('Attendance records loaded:', response.data.length);
-      setAttendance(response.data);
+      console.log('Attendance records loaded:', response.data.attendance?.length || 0);
+      setAttendance(response.data.attendance || []);
     } catch (error) {
       console.error('Error fetching attendance:', error);
       setAttendance([]);
@@ -200,24 +198,8 @@ function Attendance() {
     if (!baseUrl) return;
     
     try {
-      const response = await axios.get(`${baseUrl}/api/rfid/attendance/today`, { timeout: 10000 });
-      const todayAtt = response.data;
-      
-      const present = todayAtt.filter(a => a.timeIn).length;
-      const absent = employees.length - present;
-      const completed = todayAtt.filter(a => a.timeOut).length;
-      const late = todayAtt.filter(a => a.status === 'Late').length;
-      
-      setTodaySummary({
-        summary: {
-          present,
-          absent,
-          completed,
-          late,
-          totalEmployees: employees.length
-        },
-        records: todayAtt
-      });
+      const response = await axios.get(`${baseUrl}/api/rfid/summary/today`, { timeout: 10000 });
+      setTodaySummary(response.data);
     } catch (error) {
       console.error('Error fetching today summary:', error);
       setTodaySummary({
@@ -237,62 +219,21 @@ function Attendance() {
     if (!apiBaseUrl) return;
     
     try {
-      const startDate = new Date(year, month - 1, 1);
-      const endDate = new Date(year, month, 0);
-      
       const response = await axios.get(
-        `${apiBaseUrl}/api/rfid/attendance?startDate=${startDate.toISOString().split('T')[0]}&endDate=${endDate.toISOString().split('T')[0]}&employeeId=${employeeId}`,
+        `${apiBaseUrl}/api/rfid/attendance/monthly-summary/${employeeId}?year=${year}&month=${month}`,
         { timeout: 10000 }
       );
       
       const employee = employees.find(emp => emp.employeeId === employeeId);
       if (!employee) return;
       
-      const calendar = [];
-      const daysInMonth = endDate.getDate();
-      
-      for (let day = 1; day <= daysInMonth; day++) {
-        const currentDate = new Date(year, month - 1, day);
-        const dayName = currentDate.toLocaleDateString('en-US', { weekday: 'long' });
-        const isWorkDay = employee.workDays && employee.workDays[dayName];
-        const dateStr = currentDate.toISOString().split('T')[0];
-        
-        const dayAttendance = response.data.find(a => 
-          a.employeeId === employeeId && 
-          new Date(a.date).toISOString().split('T')[0] === dateStr
-        );
-        
-        calendar.push({
-          date: dateStr,
-          dayName,
-          isWorkDay: !!isWorkDay,
-          attendance: dayAttendance || null
-        });
-      }
-      
-      const presentDays = calendar.filter(day => day.attendance && day.attendance.timeIn).length;
-      const absentDays = calendar.filter(day => day.isWorkDay && !day.attendance).length;
-      const totalHours = calendar.reduce((sum, day) => sum + (day.attendance?.hoursWorked || 0), 0);
-      const lateDays = calendar.filter(day => day.attendance?.status === 'Late').length;
-      
       setMonthlySummary({
+        ...response.data,
         employee: {
           name: `${employee.firstName} ${employee.lastName}`,
           department: employee.department,
           position: employee.position
-        },
-        period: {
-          year,
-          month: month,
-          monthName: new Date(year, month - 1).toLocaleDateString('en-US', { month: 'long' })
-        },
-        summary: {
-          totalPresent: presentDays,
-          totalAbsent: absentDays,
-          totalHours: totalHours.toFixed(1),
-          totalLate: lateDays
-        },
-        calendar
+        }
       });
     } catch (error) {
       console.error('Error fetching monthly summary:', error);
@@ -300,172 +241,31 @@ function Attendance() {
     }
   }, [apiBaseUrl, employees]);
 
-  useEffect(() => {
-    const loadData = async () => {
-      setLoading(true);
-      setError(null);
-      
-      try {
-        const baseUrl = await initializeAPI();
-        await fetchEmployees(baseUrl);
-        await fetchAttendance(baseUrl, selectedDate);
-      } catch (error) {
-        console.error('Error loading data:', error);
-        setError(error.message || 'Failed to connect to backend server');
-      } finally {
-        setLoading(false);
-      }
-    };
-    
-    loadData();
-  }, [initializeAPI, fetchEmployees, fetchAttendance, selectedDate]);
-
-  useEffect(() => {
-    if (employees.length > 0 && apiBaseUrl) {
-      fetchTodaySummary(apiBaseUrl);
-    }
-  }, [employees, apiBaseUrl, fetchTodaySummary]);
-
-  useEffect(() => {
-    if (!apiBaseUrl || viewMode !== 'daily') return;
-
-    const intervalId = setInterval(() => {
-      fetchAttendance(apiBaseUrl, selectedDate);
-      fetchTodaySummary(apiBaseUrl);
-    }, 10000);
-
-    return () => clearInterval(intervalId);
-  }, [apiBaseUrl, viewMode, selectedDate, fetchAttendance, fetchTodaySummary]);
-
-  const retryConnection = async () => {
-    cachedBaseUrl = null;
-    setLoading(true);
-    setError(null);
+  // Fetch activity logs
+  const fetchActivityLogs = useCallback(async () => {
+    if (!apiBaseUrl) return;
     try {
-      const baseUrl = await initializeAPI();
-      await fetchEmployees(baseUrl);
-      await fetchAttendance(baseUrl, selectedDate);
+      const response = await axios.get(`${apiBaseUrl}/api/rfid/activity-logs?limit=100`);
+      setActivityLogs(response.data.logs || []);
     } catch (error) {
-      setError(error.message);
-    } finally {
-      setLoading(false);
+      console.error('Error fetching activity logs:', error);
     }
-  };
+  }, [apiBaseUrl]);
 
-  const handleSearch = (term) => {
-    setSearchTerm(term);
-    if (term === '') {
-      setFilteredEmployees(employees);
-    } else {
-      const filtered = employees.filter(emp =>
-        emp.firstName?.toLowerCase().includes(term.toLowerCase()) ||
-        emp.lastName?.toLowerCase().includes(term.toLowerCase()) ||
-        emp.employeeId?.toLowerCase().includes(term.toLowerCase()) ||
-        emp.department?.toLowerCase().includes(term.toLowerCase())
-      );
-      setFilteredEmployees(filtered);
-    }
-  };
-
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'Present': return 'text-green-600';
-      case 'Late': return 'text-yellow-600';
-      case 'Completed': return 'text-blue-600';
-      case 'Absent': return 'text-red-600';
-      case 'No Work': return 'text-gray-600';
-      case 'Half-day': return 'text-orange-600';
-      default: return 'text-gray-600';
-    }
-  };
-
-  const getAttendanceStatus = (employee) => {
-    const employeeId = employee.employeeId;
-    const realTimeUpdate = realTimeUpdates[employeeId];
-    
-    if (realTimeUpdate) {
-      return {
-        status: realTimeUpdate.status,
-        color: getStatusColor(realTimeUpdate.status),
-        timeIn: realTimeUpdate.timeIn ? formatTime(realTimeUpdate.timeIn) : '-',
-        timeOut: realTimeUpdate.timeOut ? formatTime(realTimeUpdate.timeOut) : '-',
-        isWorkDay: realTimeUpdate.isWorkDay,
-        hoursWorked: realTimeUpdate.hoursWorked || 0,
-        lateMinutes: realTimeUpdate.lateMinutes || 0,
-        overtimeMinutes: realTimeUpdate.overtimeMinutes || 0
-      };
-    }
-
-    const todayAttendance = attendance.find(a => a.employeeId === employeeId);
-    const now = new Date();
-    const dayOfWeek = new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'long' });
-    const isWorkDay = employee.workDays && employee.workDays[dayOfWeek];
-    
-    if (!todayAttendance) {
-      if (isWorkDay && employee.workSchedule && employee.workSchedule[dayOfWeek]) {
-        const schedule = employee.workSchedule[dayOfWeek];
-        const [endHour, endMinute] = schedule.end.split(':').map(Number);
-        const endTime = new Date(selectedDate);
-        endTime.setHours(endHour, endMinute, 0, 0);
-        
-        if (now > endTime) {
-          return { 
-            status: 'Absent', 
-            color: 'text-red-600', 
-            timeIn: '-', 
-            timeOut: '-',
-            isWorkDay: true
-          };
-        }
-      }
-      
-      return { 
-        status: isWorkDay ? 'Pending' : 'No Work', 
-        color: isWorkDay ? 'text-yellow-600' : 'text-gray-600', 
-        timeIn: '-', 
-        timeOut: '-',
-        isWorkDay 
-      };
-    }
-    
-    if (todayAttendance.timeIn && !todayAttendance.timeOut) {
-      return { 
-        status: todayAttendance.status === 'Late' ? 'Late' : 'Present', 
-        color: todayAttendance.status === 'Late' ? 'text-yellow-600' : 'text-green-600', 
-        timeIn: new Date(todayAttendance.timeIn).toLocaleTimeString(),
-        timeOut: '-',
-        isWorkDay: todayAttendance.isWorkDay
-      };
-    }
-    
-    if (todayAttendance.timeOut) {
-      return { 
-        status: 'Completed', 
-        color: 'text-blue-600', 
-        timeIn: new Date(todayAttendance.timeIn).toLocaleTimeString(),
-        timeOut: new Date(todayAttendance.timeOut).toLocaleTimeString(),
-        isWorkDay: todayAttendance.isWorkDay
-      };
-    }
-    
-    return { 
-      status: todayAttendance.status, 
-      color: 'text-gray-600', 
-      timeIn: '-', 
-      timeOut: '-',
-      isWorkDay: todayAttendance.isWorkDay
-    };
-  };
-
-  const assignRfid = async (employee, rfidUid) => {
+  // Scan RFID for assignment
+  const scanRfidForAssignment = async () => {
     if (!apiBaseUrl) {
-      alert('Backend connection not available. Please check server connection.');
+      alert('Backend connection not available.');
       return;
     }
 
     try {
-      const token = localStorage.getItem('ems_token');
-      const cleanUid = rfidUid.replace(/\s/g, '');
+      // Simulate RFID scan - in real implementation, this would be triggered by physical scan
+      const scannedUid = prompt('Please scan the RFID card now. Enter the UID (format: XX XX XX XX):');
+      
+      if (!scannedUid) return;
+
+      const cleanUid = scannedUid.replace(/\s/g, '').toUpperCase();
       if (!/^[0-9A-F]{8}$/i.test(cleanUid)) {
         alert('Invalid RFID format. Must be 4 pairs of 2 characters (e.g., 4D D6 D8 B5)');
         return;
@@ -473,69 +273,106 @@ function Attendance() {
 
       const formattedUid = cleanUid.match(/.{1,2}/g).join(' ').toUpperCase();
       
-      await axios.post(`${apiBaseUrl}/api/rfid/assign`, {
-        employeeId: employee.employeeId,
-        rfidUid: formattedUid
-      }, {
-        headers: {
-          'Authorization': `Bearer ${token}`
+      // Check if this UID is already assigned
+      try {
+        await axios.post(`${apiBaseUrl}/api/rfid/assign-with-scan`, {
+          employeeId: rfidAssignment.employee.employeeId,
+          rfidUid: formattedUid,
+          confirm: false
+        });
+
+        // Direct assignment successful
+        showSuccessMessage(`RFID successfully assigned to ${rfidAssignment.employee.firstName} ${rfidAssignment.employee.lastName}`);
+        setRfidAssignment({ isOpen: false, employee: null, mode: 'scan', scannedUid: '' });
+        fetchEmployees(apiBaseUrl);
+      } catch (apiError) {
+        if (apiError.response?.data?.requiresConfirmation) {
+          setRfidAssignment(prev => ({
+            ...prev,
+            mode: 'confirm',
+            scannedUid: formattedUid,
+            existingAssignment: apiError.response.data.assignedTo
+          }));
+        } else {
+          alert(apiError.response?.data?.message || 'Error scanning RFID');
         }
-      });
-      
-      showSuccessMessage(`RFID successfully assigned to ${employee.firstName} ${employee.lastName}`);
-      setRfidModal({ isOpen: false, employee: null, rfidUid: '' });
-      fetchEmployees(apiBaseUrl);
+      }
+
     } catch (error) {
       console.error('RFID assignment error:', error);
-      alert(error.response?.data?.message || 'Error assigning RFID');
+      alert('Error processing RFID assignment');
     }
   };
 
-  const removeRfid = async (employeeId, employeeName) => {
-    if (!apiBaseUrl) {
-      alert('Backend connection not available.');
+  // Confirm RFID reassignment
+  const confirmRfidReassignment = async () => {
+    try {
+      await axios.post(`${apiBaseUrl}/api/rfid/assign-with-scan`, {
+        employeeId: rfidAssignment.employee.employeeId,
+        rfidUid: rfidAssignment.scannedUid,
+        confirm: true
+      });
+
+      showSuccessMessage(`RFID successfully reassigned to ${rfidAssignment.employee.firstName} ${rfidAssignment.employee.lastName}`);
+      setRfidAssignment({ isOpen: false, employee: null, mode: 'scan', scannedUid: '' });
+      fetchEmployees(apiBaseUrl);
+      fetchActivityLogs();
+
+    } catch (error) {
+      console.error('RFID reassignment error:', error);
+      alert(error.response?.data?.message || 'Error reassigning RFID');
+    }
+  };
+
+  // Remove RFID with reason
+  const removeRfidWithReason = async () => {
+    const { employee, removalReason, otherReason } = rfidAssignment;
+    
+    if (!removalReason) {
+      alert('Please select a removal reason');
       return;
     }
 
-    if (window.confirm(`Are you sure you want to remove RFID assignment from ${employeeName}?`)) {
-      try {
-        const token = localStorage.getItem('ems_token');
-        await axios.delete(`${apiBaseUrl}/api/rfid/assign/${employeeId}`, {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
-        showSuccessMessage(`RFID assignment removed from ${employeeName}`);
-        fetchEmployees(apiBaseUrl);
-      } catch (error) {
-        alert('Error removing RFID assignment');
-      }
-    }
-  };
-
-  const archiveEmployee = async (employeeId, employeeName) => {
-    if (!apiBaseUrl) {
-      alert('Backend connection not available.');
+    if (removalReason === 'OTHER' && !otherReason) {
+      alert('Please specify the removal reason');
       return;
     }
 
-    if (window.confirm(`Are you sure you want to archive ${employeeName}?`)) {
-      try {
-        const token = localStorage.getItem('ems_token');
-        await axios.delete(`${apiBaseUrl}/api/employees/${employeeId}`, {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
-        showSuccessMessage(`${employeeName} archived successfully`);
-        fetchEmployees(apiBaseUrl);
-      } catch (error) {
-        alert('Error archiving employee');
-      }
+    try {
+      await axios.delete(`${apiBaseUrl}/api/rfid/assign/${employee.employeeId}`, {
+        data: {
+          reason: removalReason,
+          otherReason: removalReason === 'OTHER' ? otherReason : ''
+        }
+      });
+
+      showSuccessMessage(`RFID assignment removed from ${employee.firstName} ${employee.lastName}`);
+      setRfidAssignment({ isOpen: false, employee: null, mode: 'scan', scannedUid: '' });
+      fetchEmployees(apiBaseUrl);
+      fetchActivityLogs();
+
+    } catch (error) {
+      console.error('RFID removal error:', error);
+      alert(error.response?.data?.message || 'Error removing RFID assignment');
     }
   };
 
-  const manualTimeInOut = async (employee, action, time) => {
+  // Open remove RFID modal
+  const openRemoveRfidModal = (employee) => {
+    setRfidAssignment({
+      isOpen: true,
+      employee,
+      mode: 'remove',
+      scannedUid: '',
+      existingAssignment: null,
+      removalReason: '',
+      otherReason: ''
+    });
+  };
+
+  const manualTimeInOut = async () => {
+    const { employee, action, time } = rfidAssignment;
+    
     if (!apiBaseUrl) {
       alert('Backend connection not available.');
       return;
@@ -582,11 +419,43 @@ function Attendance() {
       }
 
       showSuccessMessage(`${action === 'timein' ? 'Time In' : 'Time Out'} recorded successfully for ${employee.firstName} ${employee.lastName}`);
-      setManualModal({ isOpen: false, employee: null, action: 'timein', time: '' });
+      setRfidAssignment({ isOpen: false, employee: null, mode: 'scan', scannedUid: '' });
       fetchAttendance(apiBaseUrl, selectedDate);
     } catch (error) {
       console.error('Manual attendance error:', error);
       alert(error.response?.data?.error || 'Error recording attendance');
+    }
+  };
+
+  const openManualAttendanceModal = (employee, action) => {
+    setRfidAssignment({
+      isOpen: true,
+      employee,
+      mode: 'manual',
+      action,
+      time: ''
+    });
+  };
+
+  const archiveEmployee = async (employeeId, employeeName) => {
+    if (!apiBaseUrl) {
+      alert('Backend connection not available.');
+      return;
+    }
+
+    if (window.confirm(`Are you sure you want to archive ${employeeName}?`)) {
+      try {
+        const token = localStorage.getItem('ems_token');
+        await axios.delete(`${apiBaseUrl}/api/employees/${employeeId}`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        showSuccessMessage(`${employeeName} archived successfully`);
+        fetchEmployees(apiBaseUrl);
+      } catch (error) {
+        alert('Error archiving employee');
+      }
     }
   };
 
@@ -601,10 +470,170 @@ function Attendance() {
         `${apiBaseUrl}/api/rfid/attendance?startDate=${startDate.toISOString().split('T')[0]}&endDate=${new Date().toISOString().split('T')[0]}&employeeId=${employee.employeeId}`,
         { timeout: 10000 }
       );
-      setEmployeeHistory((prev) => ({ ...prev, [employee.employeeId]: response.data || [] }));
+      setEmployeeHistory((prev) => ({ ...prev, [employee.employeeId]: response.data.attendance || [] }));
     } catch (err) {
       console.error('Error fetching employee history:', err);
     }
+  };
+
+  useEffect(() => {
+    const loadData = async () => {
+      setLoading(true);
+      setError(null);
+      
+      try {
+        const baseUrl = await initializeAPI();
+        await fetchEmployees(baseUrl);
+        await fetchAttendance(baseUrl, selectedDate);
+        await fetchActivityLogs();
+      } catch (error) {
+        console.error('Error loading data:', error);
+        setError(error.message || 'Failed to connect to backend server');
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    loadData();
+  }, [initializeAPI, fetchEmployees, fetchAttendance, selectedDate, fetchActivityLogs]);
+
+  useEffect(() => {
+    if (employees.length > 0 && apiBaseUrl) {
+      fetchTodaySummary(apiBaseUrl);
+    }
+  }, [employees, apiBaseUrl, fetchTodaySummary]);
+
+  useEffect(() => {
+    if (!apiBaseUrl || viewMode !== 'daily') return;
+
+    const intervalId = setInterval(() => {
+      fetchAttendance(apiBaseUrl, selectedDate);
+      fetchTodaySummary(apiBaseUrl);
+    }, 10000);
+
+    return () => clearInterval(intervalId);
+  }, [apiBaseUrl, viewMode, selectedDate, fetchAttendance, fetchTodaySummary]);
+
+  const retryConnection = async () => {
+    cachedBaseUrl = null;
+    setLoading(true);
+    setError(null);
+    try {
+      const baseUrl = await initializeAPI();
+      await fetchEmployees(baseUrl);
+      await fetchAttendance(baseUrl, selectedDate);
+    } catch (error) {
+      setError(error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSearch = (term) => {
+    setSearchTerm(term);
+    if (term === '') {
+      setFilteredEmployees(employees);
+    } else {
+      const filtered = employees.filter(emp =>
+        emp.firstName?.toLowerCase().includes(term.toLowerCase()) ||
+        emp.lastName?.toLowerCase().includes(term.toLowerCase()) ||
+        emp.employeeId?.toLowerCase().includes(term.toLowerCase()) ||
+        emp.department?.toLowerCase().includes(term.toLowerCase()) ||
+        emp.position?.toLowerCase().includes(term.toLowerCase())
+      );
+      setFilteredEmployees(filtered);
+    }
+  };
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'Present': return 'text-green-600 bg-green-100';
+      case 'Late': return 'text-yellow-600 bg-yellow-100';
+      case 'Completed': return 'text-blue-600 bg-blue-100';
+      case 'Absent': return 'text-red-600 bg-red-100';
+      case 'No Work': return 'text-gray-600 bg-gray-100';
+      case 'Half-day': return 'text-orange-600 bg-orange-100';
+      case 'Pending': return 'text-purple-600 bg-purple-100';
+      default: return 'text-gray-600 bg-gray-100';
+    }
+  };
+
+  const getAttendanceStatus = (employee) => {
+    const employeeId = employee.employeeId;
+    const realTimeUpdate = realTimeUpdates[employeeId];
+    
+    if (realTimeUpdate) {
+      return {
+        status: realTimeUpdate.status,
+        color: getStatusColor(realTimeUpdate.status),
+        timeIn: realTimeUpdate.timeIn ? formatTime(realTimeUpdate.timeIn) : '-',
+        timeOut: realTimeUpdate.timeOut ? formatTime(realTimeUpdate.timeOut) : '-',
+        isWorkDay: realTimeUpdate.isWorkDay,
+        hoursWorked: realTimeUpdate.hoursWorked || 0,
+        lateMinutes: realTimeUpdate.lateMinutes || 0,
+        overtimeMinutes: realTimeUpdate.overtimeMinutes || 0
+      };
+    }
+
+    const todayAttendance = attendance.find(a => a.employeeId === employeeId);
+    const now = new Date();
+    const dayOfWeek = new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'long' });
+    const isWorkDay = employee.workDays && employee.workDays[dayOfWeek];
+    
+    if (!todayAttendance) {
+      if (isWorkDay && employee.workSchedule && employee.workSchedule[dayOfWeek]) {
+        const schedule = employee.workSchedule[dayOfWeek];
+        const [endHour, endMinute] = schedule.end.split(':').map(Number);
+        const endTime = new Date(selectedDate);
+        endTime.setHours(endHour, endMinute, 0, 0);
+        
+        if (now > endTime) {
+          return { 
+            status: 'Absent', 
+            color: getStatusColor('Absent'), 
+            timeIn: '-', 
+            timeOut: '-',
+            isWorkDay: true
+          };
+        }
+      }
+      
+      return { 
+        status: isWorkDay ? 'Pending' : 'No Work', 
+        color: getStatusColor(isWorkDay ? 'Pending' : 'No Work'), 
+        timeIn: '-', 
+        timeOut: '-',
+        isWorkDay 
+      };
+    }
+    
+    if (todayAttendance.timeIn && !todayAttendance.timeOut) {
+      return { 
+        status: todayAttendance.status === 'Late' ? 'Late' : 'Present', 
+        color: getStatusColor(todayAttendance.status === 'Late' ? 'Late' : 'Present'), 
+        timeIn: formatTime(todayAttendance.timeIn),
+        timeOut: '-',
+        isWorkDay: todayAttendance.isWorkDay
+      };
+    }
+    
+    if (todayAttendance.timeOut) {
+      return { 
+        status: todayAttendance.status, 
+        color: getStatusColor(todayAttendance.status), 
+        timeIn: formatTime(todayAttendance.timeIn),
+        timeOut: formatTime(todayAttendance.timeOut),
+        isWorkDay: todayAttendance.isWorkDay
+      };
+    }
+    
+    return { 
+      status: todayAttendance.status, 
+      color: getStatusColor(todayAttendance.status), 
+      timeIn: '-', 
+      timeOut: '-',
+      isWorkDay: todayAttendance.isWorkDay
+    };
   };
 
   const formatRfidUid = (uid) => {
@@ -693,6 +722,7 @@ function Attendance() {
 
   return (
     <div className="p-4 h-full flex flex-col">
+      {/* Success Message */}
       {showSuccess && (
         <div className="fixed top-4 right-4 z-50 animate-fade-in">
           <div className="bg-[#400504] text-white px-6 py-3 rounded-lg shadow-lg border-l-4 border-[#cba235]">
@@ -728,6 +758,13 @@ function Attendance() {
               <FaDesktop className="mr-1" /> 
               Backend: {apiBaseUrl.replace('http://localhost:', 'Port ')}
             </span>
+            <button
+              onClick={() => setLogsModal({ isOpen: true })}
+              className="flex items-center text-sm px-2 py-1 bg-blue-100 text-blue-800 rounded hover:bg-blue-200"
+            >
+              <FaHistory className="mr-1" />
+              Activity Logs
+            </button>
           </div>
         </div>
         
@@ -813,7 +850,7 @@ function Attendance() {
             <FaSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
             <input
               type="text"
-              placeholder="Search employees by name, ID, or department..."
+              placeholder="Search employees by name, ID, department, or position..."
               value={searchTerm}
               onChange={(e) => handleSearch(e.target.value)}
               className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#cba235] text-sm"
@@ -913,14 +950,21 @@ function Attendance() {
                             <FaChartBar />
                           </button>
                           <button
-                            onClick={() => setManualModal({ isOpen: true, employee, action: 'timein', time: '' })}
+                            onClick={() => openManualAttendanceModal(employee, 'timein')}
                             className="text-orange-600 hover:text-orange-900 p-1 rounded bg-orange-50 text-xs transition-colors"
-                            title="Manual Time In/Out"
+                            title="Manual Time In"
                           >
-                            <FaEdit />
+                            <FaClock />
                           </button>
                           <button
-                            onClick={() => setRfidModal({ isOpen: true, employee, rfidUid: employee.rfidUid || '' })}
+                            onClick={() => openManualAttendanceModal(employee, 'timeout')}
+                            className="text-indigo-600 hover:text-indigo-900 p-1 rounded bg-indigo-50 text-xs transition-colors"
+                            title="Manual Time Out"
+                          >
+                            <FaSignOutAlt />
+                          </button>
+                          <button
+                            onClick={() => setRfidAssignment({ isOpen: true, employee, mode: 'scan', scannedUid: '' })}
                             className="text-green-600 hover:text-green-900 p-1 rounded bg-green-50 text-xs transition-colors"
                             title="Assign RFID"
                           >
@@ -928,7 +972,7 @@ function Attendance() {
                           </button>
                           {employee.isRfidAssigned && (
                             <button
-                              onClick={() => removeRfid(employee.employeeId, `${employee.firstName} ${employee.lastName}`)}
+                              onClick={() => openRemoveRfidModal(employee)}
                               className="text-red-600 hover:text-red-900 p-1 rounded bg-red-50 text-xs transition-colors"
                               title="Remove RFID"
                             >
@@ -953,18 +997,202 @@ function Attendance() {
         )}
       </div>
 
-      {/* Modals remain the same as your original code */}
-      {/* Manual Time In/Out Modal */}
-      {manualModal.isOpen && (
+      {/* RFID Assignment Modal */}
+      {rfidAssignment.isOpen && rfidAssignment.mode === 'scan' && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-md">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-bold text-[#400504]">
-                Manual {manualModal.action === 'timein' ? 'Time In' : 'Time Out'} - {manualModal.employee?.firstName} {manualModal.employee?.lastName}
+                Assign RFID to {rfidAssignment.employee?.firstName} {rfidAssignment.employee?.lastName}
               </h3>
               <button
-                onClick={() => setManualModal({ isOpen: false, employee: null, action: 'timein', time: '' })}
-                className="text-gray-400 hover:text-gray-600 transition-colors"
+                onClick={() => setRfidAssignment({ isOpen: false, employee: null, mode: 'scan', scannedUid: '' })}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <FaTimes />
+              </button>
+            </div>
+            
+            <div className="mb-4 p-3 bg-blue-50 rounded-md border border-blue-200">
+              <div className="flex items-start">
+                <FaInfoCircle className="text-blue-600 mt-1 mr-2 flex-shrink-0" />
+                <div>
+                  <p className="text-sm text-blue-800 font-medium">How to assign RFID:</p>
+                  <ol className="text-xs text-blue-700 mt-1 list-decimal list-inside space-y-1">
+                    <li>Click "Scan RFID Card" button</li>
+                    <li>Physically scan the RFID card on the reader</li>
+                    <li>The system will automatically detect the UID</li>
+                    <li>Confirm the assignment</li>
+                  </ol>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => setRfidAssignment({ isOpen: false, employee: null, mode: 'scan', scannedUid: '' })}
+                className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={scanRfidForAssignment}
+                className="px-4 py-2 bg-[#400504] text-white rounded-md hover:bg-[#300303] text-sm flex items-center"
+              >
+                <FaIdCard className="mr-2" />
+                Scan RFID Card
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* RFID Reassignment Confirmation Modal */}
+      {rfidAssignment.isOpen && rfidAssignment.mode === 'confirm' && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold text-[#400504]">Confirm RFID Reassignment</h3>
+              <button
+                onClick={() => setRfidAssignment({ isOpen: false, employee: null, mode: 'scan', scannedUid: '' })}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <FaTimes />
+              </button>
+            </div>
+            
+            <div className="mb-4 p-3 bg-yellow-50 rounded-md border border-yellow-200">
+              <div className="flex items-start">
+                <FaExclamationTriangle className="text-yellow-600 mt-1 mr-2 flex-shrink-0" />
+                <div>
+                  <p className="text-sm text-yellow-800 font-medium">RFID Already Assigned</p>
+                  <p className="text-xs text-yellow-700 mt-1">
+                    This RFID card is currently assigned to: <strong>{rfidAssignment.existingAssignment}</strong>
+                  </p>
+                  <p className="text-xs text-yellow-700 mt-1">
+                    Do you want to reassign it to {rfidAssignment.employee?.firstName} {rfidAssignment.employee?.lastName}?
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                RFID UID to be assigned:
+              </label>
+              <div className="px-3 py-2 bg-gray-100 rounded-md font-mono text-sm">
+                {rfidAssignment.scannedUid}
+              </div>
+            </div>
+
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => setRfidAssignment({ isOpen: false, employee: null, mode: 'scan', scannedUid: '' })}
+                className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmRfidReassignment}
+                className="px-4 py-2 bg-[#400504] text-white rounded-md hover:bg-[#300303] text-sm"
+              >
+                Confirm Reassignment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Remove RFID Modal */}
+      {rfidAssignment.isOpen && rfidAssignment.mode === 'remove' && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold text-[#400504]">
+                Remove RFID from {rfidAssignment.employee?.firstName} {rfidAssignment.employee?.lastName}
+              </h3>
+              <button
+                onClick={() => setRfidAssignment({ isOpen: false, employee: null, mode: 'scan', scannedUid: '' })}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <FaTimes />
+              </button>
+            </div>
+            
+            <div className="mb-4 p-3 bg-red-50 rounded-md border border-red-200">
+              <div className="flex items-start">
+                <FaExclamationTriangle className="text-red-600 mt-1 mr-2 flex-shrink-0" />
+                <div>
+                  <p className="text-sm text-red-800 font-medium">Remove RFID Assignment</p>
+                  <p className="text-xs text-red-700 mt-1">
+                    This will remove the RFID assignment from the employee. Please provide a reason for removal.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Removal Reason <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={rfidAssignment.removalReason}
+                onChange={(e) => setRfidAssignment(prev => ({ ...prev, removalReason: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#cba235] text-sm"
+              >
+                <option value="">Select a reason</option>
+                <option value="ID_MISSING">ID Card Missing</option>
+                <option value="CARD_DAMAGED">Card Damaged</option>
+                <option value="EMPLOYEE_TERMINATED">Employee Terminated</option>
+                <option value="SECURITY_ISSUE">Security Issue</option>
+                <option value="OTHER">Other</option>
+              </select>
+            </div>
+
+            {rfidAssignment.removalReason === 'OTHER' && (
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Specify Reason <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  value={rfidAssignment.otherReason}
+                  onChange={(e) => setRfidAssignment(prev => ({ ...prev, otherReason: e.target.value }))}
+                  placeholder="Please specify the reason for removal..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#cba235] text-sm"
+                  rows="3"
+                />
+              </div>
+            )}
+
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => setRfidAssignment({ isOpen: false, employee: null, mode: 'scan', scannedUid: '' })}
+                className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={removeRfidWithReason}
+                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 text-sm"
+              >
+                Remove RFID
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manual Attendance Modal */}
+      {rfidAssignment.isOpen && rfidAssignment.mode === 'manual' && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold text-[#400504]">
+                Manual {rfidAssignment.action === 'timein' ? 'Time In' : 'Time Out'} - {rfidAssignment.employee?.firstName} {rfidAssignment.employee?.lastName}
+              </h3>
+              <button
+                onClick={() => setRfidAssignment({ isOpen: false, employee: null, mode: 'scan', scannedUid: '' })}
+                className="text-gray-400 hover:text-gray-600"
               >
                 <FaTimes />
               </button>
@@ -989,8 +1217,8 @@ function Attendance() {
               </label>
               <input
                 type="time"
-                value={manualModal.time}
-                onChange={(e) => setManualModal({ ...manualModal, time: e.target.value })}
+                value={rfidAssignment.time}
+                onChange={(e) => setRfidAssignment(prev => ({ ...prev, time: e.target.value }))}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#cba235] text-sm"
               />
               <p className="text-xs text-gray-500 mt-1">
@@ -1000,70 +1228,103 @@ function Attendance() {
             
             <div className="flex justify-end space-x-3">
               <button
-                onClick={() => setManualModal({ isOpen: false, employee: null, action: 'timein', time: '' })}
-                className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 text-sm transition-colors"
+                onClick={() => setRfidAssignment({ isOpen: false, employee: null, mode: 'scan', scannedUid: '' })}
+                className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 text-sm"
               >
                 Cancel
               </button>
               <button
-                onClick={() => manualTimeInOut(manualModal.employee, manualModal.action, manualModal.time)}
-                className="px-4 py-2 bg-[#400504] text-white rounded-md hover:bg-[#300303] text-sm transition-colors"
+                onClick={manualTimeInOut}
+                className="px-4 py-2 bg-[#400504] text-white rounded-md hover:bg-[#300303] text-sm"
               >
-                Record {manualModal.action === 'timein' ? 'Time In' : 'Time Out'}
+                Record {rfidAssignment.action === 'timein' ? 'Time In' : 'Time Out'}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* RFID Assignment Modal */}
-      {rfidModal.isOpen && (
+      {/* Activity Logs Modal */}
+      {logsModal.isOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+          <div className="bg-white rounded-lg p-6 w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-bold text-[#400504]">Assign RFID to {rfidModal.employee?.firstName} {rfidModal.employee?.lastName}</h3>
+              <h3 className="text-lg font-bold text-[#400504]">Activity Logs</h3>
               <button
-                onClick={() => setRfidModal({ isOpen: false, employee: null, rfidUid: '' })}
-                className="text-gray-400 hover:text-gray-600 transition-colors"
+                onClick={() => setLogsModal({ isOpen: false })}
+                className="text-gray-400 hover:text-gray-600"
               >
                 <FaTimes />
               </button>
             </div>
-            
-            <div className="mb-4 p-3 bg-yellow-50 rounded-md border border-yellow-200">
-              <p className="text-sm text-yellow-800">
-                <strong>How to get RFID UID:</strong> Scan the RFID card on your Arduino device, then check the Serial Monitor for the UID.
-              </p>
+
+            <div className="flex-1 overflow-auto">
+              {activityLogs.length > 0 ? (
+                <table className="min-w-full table-auto">
+                  <thead className="bg-gray-100">
+                    <tr>
+                      <th className="px-4 py-2 text-left text-xs font-medium">Timestamp</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium">Action</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium">Employee</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium">Details</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium">Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activityLogs.map((log) => (
+                      <tr key={log._id} className="border-b hover:bg-gray-50 transition-colors">
+                        <td className="px-4 py-2 text-sm">
+                          {new Date(log.timestamp).toLocaleString()}
+                        </td>
+                        <td className="px-4 py-2 text-sm">
+                          <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs ${
+                            log.action.includes('ASSIGNED') ? 'bg-green-100 text-green-800' :
+                            log.action.includes('REMOVED') ? 'bg-red-100 text-red-800' :
+                            'bg-blue-100 text-blue-800'
+                          }`}>
+                            {log.action.replace(/_/g, ' ')}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 text-sm">
+                          <div>
+                            <div className="font-medium">{log.employeeName}</div>
+                            <div className="text-xs text-gray-500">{log.employeeId}</div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-2 text-sm">
+                          {log.details && Object.keys(log.details).length > 0 ? (
+                            <div className="text-xs">
+                              {Object.entries(log.details).map(([key, value]) => (
+                                <div key={key}>
+                                  <strong>{key}:</strong> {String(value)}
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-gray-400">No details</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2 text-sm">
+                          {log.reason || <span className="text-gray-400">-</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <div className="text-center py-8 text-gray-500">
+                  <FaHistory className="text-4xl mx-auto mb-2 text-gray-300" />
+                  <p>No activity logs found.</p>
+                </div>
+              )}
             </div>
             
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                RFID UID (Format: XX XX XX XX)
-              </label>
-              <input
-                type="text"
-                value={rfidModal.rfidUid}
-                onChange={(e) => setRfidModal({ ...rfidModal, rfidUid: e.target.value })}
-                placeholder="e.g., 4D D6 D8 B5"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#cba235] font-mono text-sm"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                Enter 4 pairs of 2 characters (letters/numbers). Example: 4D D6 D8 B5
-              </p>
-            </div>
-            
-            <div className="flex justify-end space-x-3">
+            <div className="flex justify-end mt-4 pt-4 border-t">
               <button
-                onClick={() => setRfidModal({ isOpen: false, employee: null, rfidUid: '' })}
-                className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 text-sm transition-colors"
+                onClick={() => setLogsModal({ isOpen: false })}
+                className="px-4 py-2 bg-[#400504] text-white rounded-md hover:bg-[#300303] text-sm"
               >
-                Cancel
-              </button>
-              <button
-                onClick={() => assignRfid(rfidModal.employee, rfidModal.rfidUid)}
-                className="px-4 py-2 bg-[#400504] text-white rounded-md hover:bg-[#300303] text-sm transition-colors"
-              >
-                Assign RFID
+                Close
               </button>
             </div>
           </div>
@@ -1080,7 +1341,7 @@ function Attendance() {
               </h3>
               <button
                 onClick={() => setViewModal({ isOpen: false, employee: null })}
-                className="text-gray-400 hover:text-gray-600 transition-colors"
+                className="text-gray-400 hover:text-gray-600"
               >
                 <FaTimes />
               </button>
@@ -1164,7 +1425,7 @@ function Attendance() {
             <div className="flex justify-end mt-4 pt-4 border-t">
               <button
                 onClick={() => setViewModal({ isOpen: false, employee: null })}
-                className="px-4 py-2 bg-[#400504] text-white rounded-md hover:bg-[#300303] text-sm transition-colors"
+                className="px-4 py-2 bg-[#400504] text-white rounded-md hover:bg-[#300303] text-sm"
               >
                 Close
               </button>
@@ -1183,13 +1444,18 @@ function Attendance() {
                   Monthly Attendance Summary - {monthlySummary.employee.name}
                 </h3>
                 <p className="text-gray-600">
-                  {monthlySummary.period.monthName} {monthlySummary.period.year} • 
+                  {monthlySummary.period?.monthName || `${selectedMonth}/${selectedYear}`} • 
                   {monthlySummary.employee.department} • {monthlySummary.employee.position}
                 </p>
+                {monthlySummary.rfidAssignedDate && (
+                  <p className="text-sm text-gray-500 mt-1">
+                    RFID assigned on: {new Date(monthlySummary.rfidAssignedDate).toLocaleDateString()}
+                  </p>
+                )}
               </div>
               <button
                 onClick={closeMonthlySummary}
-                className="text-gray-400 hover:text-gray-600 text-xl transition-colors"
+                className="text-gray-400 hover:text-gray-600 text-xl"
               >
                 <FaTimes />
               </button>
@@ -1199,117 +1465,49 @@ function Attendance() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
               <div className="bg-green-100 p-4 rounded-lg text-center border border-green-200">
                 <FaUserClock className="text-2xl text-green-600 mx-auto mb-2" />
-                <div className="text-2xl font-bold text-green-600">{monthlySummary.summary.totalPresent}</div>
+                <div className="text-2xl font-bold text-green-600">{monthlySummary.presentDays}</div>
                 <div className="text-green-800 text-sm">Present Days</div>
               </div>
               <div className="bg-red-100 p-4 rounded-lg text-center border border-red-200">
                 <FaUserTimes className="text-2xl text-red-600 mx-auto mb-2" />
-                <div className="text-2xl font-bold text-red-600">{monthlySummary.summary.totalAbsent}</div>
+                <div className="text-2xl font-bold text-red-600">{monthlySummary.absentDays}</div>
                 <div className="text-red-800 text-sm">Absent Days</div>
               </div>
               <div className="bg-blue-100 p-4 rounded-lg text-center border border-blue-200">
                 <FaBusinessTime className="text-2xl text-blue-600 mx-auto mb-2" />
-                <div className="text-2xl font-bold text-blue-600">{monthlySummary.summary.totalHours}h</div>
+                <div className="text-2xl font-bold text-blue-600">{monthlySummary.totalHours}h</div>
                 <div className="text-blue-800 text-sm">Total Hours</div>
               </div>
               <div className="bg-yellow-100 p-4 rounded-lg text-center border border-yellow-200">
                 <FaClock className="text-2xl text-yellow-600 mx-auto mb-2" />
-                <div className="text-2xl font-bold text-yellow-600">{monthlySummary.summary.totalLate}</div>
+                <div className="text-2xl font-bold text-yellow-600">{monthlySummary.lateDays}</div>
                 <div className="text-yellow-800 text-sm">Late Days</div>
               </div>
             </div>
 
-            {/* Calendar View */}
-            <div className="mb-6">
-              <h4 className="font-semibold mb-3 text-lg text-[#400504]">Monthly Calendar View</h4>
-              <div className="grid grid-cols-7 gap-1 mb-2 bg-gray-100 rounded-t-lg">
-                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
-                  <div key={day} className="text-center font-semibold py-2 text-sm">{day}</div>
-                ))}
+            <div className="bg-gray-50 p-4 rounded-lg mb-6">
+              <h4 className="font-semibold mb-2 text-[#400504]">Summary Information</h4>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                <div>
+                  <strong>Total Work Days:</strong> {monthlySummary.totalWorkDays}
+                </div>
+                <div>
+                  <strong>Attendance Rate:</strong> {monthlySummary.totalWorkDays > 0 ? 
+                    ((monthlySummary.presentDays / monthlySummary.totalWorkDays) * 100).toFixed(1) : 0}%
+                </div>
+                <div>
+                  <strong>Average Hours/Day:</strong> {monthlySummary.averageHours}h
+                </div>
+                <div>
+                  <strong>Half Days:</strong> {monthlySummary.halfDays || 0}
+                </div>
               </div>
-              <div className="grid grid-cols-7 gap-1">
-                {monthlySummary.calendar.map(day => (
-                  <div key={day.date} className={`p-2 border rounded text-center min-h-[60px] ${
-                    !day.isWorkDay ? 'bg-gray-50' : 
-                    day.attendance ? 
-                      day.attendance.status === 'Present' ? 'bg-green-50 border-green-200' :
-                      day.attendance.status === 'Late' ? 'bg-yellow-50 border-yellow-200' :
-                      day.attendance.status === 'Completed' ? 'bg-blue-50 border-blue-200' : 
-                      'bg-gray-50 border-gray-200'
-                    : 'bg-red-50 border-red-200'
-                  }`}>
-                    <div className="text-sm font-medium mb-1">
-                      {new Date(day.date).getDate()}
-                    </div>
-                    <div className="text-xs space-y-1">
-                      {day.attendance ? (
-                        <>
-                          <div className="truncate">{day.attendance.timeIn ? formatTime(day.attendance.timeIn) : '-'}</div>
-                          <div className="font-semibold">{day.attendance.hoursWorked || 0}h</div>
-                        </>
-                      ) : day.isWorkDay ? (
-                        <span className="text-red-600">Absent</span>
-                      ) : (
-                        <span className="text-gray-500">Off</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Detailed Table */}
-            <div className="overflow-x-auto">
-              <h4 className="font-semibold mb-3 text-lg text-[#400504]">Detailed Attendance Records</h4>
-              <table className="min-w-full table-auto border-collapse">
-                <thead className="bg-gray-100">
-                  <tr>
-                    <th className="px-4 py-2 text-left text-sm font-medium border">Date</th>
-                    <th className="px-4 py-2 text-left text-sm font-medium border">Day</th>
-                    <th className="px-4 py-2 text-left text-sm font-medium border">Work Day</th>
-                    <th className="px-4 py-2 text-left text-sm font-medium border">Time In</th>
-                    <th className="px-4 py-2 text-left text-sm font-medium border">Time Out</th>
-                    <th className="px-4 py-2 text-left text-sm font-medium border">Hours</th>
-                    <th className="px-4 py-2 text-left text-sm font-medium border">Status</th>
-                    <th className="px-4 py-2 text-left text-sm font-medium border">Late</th>
-                    <th className="px-4 py-2 text-left text-sm font-medium border">Overtime</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {monthlySummary.calendar.map(day => (
-                    <tr key={day.date} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-2 text-sm border">{new Date(day.date).toLocaleDateString()}</td>
-                      <td className="px-4 py-2 text-sm border">{day.dayName}</td>
-                      <td className="px-4 py-2 text-sm border text-center">
-                        {day.isWorkDay ? '✓' : '✗'}
-                      </td>
-                      <td className="px-4 py-2 text-sm border">{day.attendance?.timeIn ? formatTime(day.attendance.timeIn) : '-'}</td>
-                      <td className="px-4 py-2 text-sm border">{day.attendance?.timeOut ? formatTime(day.attendance.timeOut) : '-'}</td>
-                      <td className="px-4 py-2 text-sm border text-center">{day.attendance?.hoursWorked || 0}</td>
-                      <td className="px-4 py-2 text-sm border">
-                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs ${
-                          day.attendance ? 
-                            day.attendance.status === 'Present' ? 'bg-green-100 text-green-800' :
-                            day.attendance.status === 'Late' ? 'bg-yellow-100 text-yellow-800' :
-                            day.attendance.status === 'Completed' ? 'bg-blue-100 text-blue-800' :
-                            'bg-gray-100 text-gray-800'
-                          : day.isWorkDay ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'
-                        }`}>
-                          {day.attendance?.status || (day.isWorkDay ? 'Absent' : 'No Work')}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2 text-sm border text-center">{day.attendance?.lateMinutes || 0}m</td>
-                      <td className="px-4 py-2 text-sm border text-center">{day.attendance?.overtimeMinutes || 0}m</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
             </div>
 
             <div className="flex justify-end mt-6 pt-4 border-t">
               <button
                 onClick={closeMonthlySummary}
-                className="px-4 py-2 bg-[#400504] text-white rounded-md hover:bg-[#300303] transition-colors"
+                className="px-4 py-2 bg-[#400504] text-white rounded-md hover:bg-[#300303]"
               >
                 Close Summary
               </button>

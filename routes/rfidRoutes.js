@@ -1,6 +1,7 @@
 import express from 'express';
 import Employee from '../models/Employee.js';
 import Attendance from '../models/Attendance.js';
+import ActivityLog from '../models/ActivityLog.js';
 
 const router = express.Router();
 
@@ -85,18 +86,15 @@ const determineAttendanceStatus = (timeIn, timeOut, isWorkDay, lateMinutes, hour
   return 'Present';
 };
 
-// Enhanced RFID Scan Endpoint with better debugging
+// Enhanced RFID Scan Endpoint
 router.post('/scan', async (req, res) => {
   try {
-    console.log('=== RFID Scan Request Received ===');
-    console.log('Headers:', req.headers);
+    console.log('=== RFID Scan Request ===');
     console.log('Body:', req.body);
-    console.log('URL:', req.originalUrl);
     
     const { uid } = req.body;
     
     if (!uid) {
-      console.log('ERROR: No UID provided');
       return res.status(400).json({ 
         message: 'ERROR:NO_UID',
         displayMessage: 'ERROR:NO_UID:Scan_Again'
@@ -104,10 +102,8 @@ router.post('/scan', async (req, res) => {
     }
 
     const cleanUid = uid.replace(/\s/g, '').toUpperCase();
-    console.log('Cleaned UID:', cleanUid);
-
+    
     if (!validateRfidUid(cleanUid)) {
-      console.log('ERROR: Invalid UID format');
       return res.status(400).json({ 
         message: 'ERROR:INVALID_UID',
         displayMessage: 'ERROR:INVALID_UID:Check_Card'
@@ -115,7 +111,6 @@ router.post('/scan', async (req, res) => {
     }
 
     const formattedUid = formatRfidUid(cleanUid);
-    console.log('Formatted UID for lookup:', formattedUid);
     
     // Find employee with this RFID UID
     const employee = await Employee.findOne({ 
@@ -124,7 +119,19 @@ router.post('/scan', async (req, res) => {
     });
 
     if (!employee) {
-      console.log('ERROR: No employee found with UID:', formattedUid);
+      // Check if this UID exists but assigned to archived/inactive employee
+      const inactiveEmployee = await Employee.findOne({ 
+        rfidUid: formattedUid,
+        status: 'Archived'
+      });
+      
+      if (inactiveEmployee) {
+        return res.json({ 
+          message: 'ERROR:EMPLOYEE_INACTIVE',
+          displayMessage: 'ERROR:EMPLOYEE_INACTIVE:Card_Archived'
+        });
+      }
+      
       return res.json({ 
         message: 'ERROR:NO_ASSIGNED_UID',
         displayMessage: 'ERROR:NO_ASSIGNED_UID:See_Admin',
@@ -132,18 +139,12 @@ router.post('/scan', async (req, res) => {
       });
     }
 
-    console.log('Employee found:', {
-      name: `${employee.firstName} ${employee.lastName}`,
-      employeeId: employee.employeeId,
-      department: employee.department
-    });
-
     const now = new Date();
     const today = new Date(now);
     today.setHours(0, 0, 0, 0);
     
+    // Get work schedule for today
     const { isWorkDay, schedule, dayName } = getWorkScheduleForDay(employee, today);
-    console.log('Schedule check:', { dayName, isWorkDay, schedule });
 
     // Find existing attendance record for today
     let attendance = await Attendance.findOne({
@@ -155,7 +156,8 @@ router.post('/scan', async (req, res) => {
     let responseMessage = '';
 
     if (!attendance) {
-      console.log('Recording Time In for employee:', employee.employeeId);
+      // Create new attendance record for Time In
+      console.log('Recording Time In for:', employee.employeeId);
       
       let lateMinutes = 0;
       if (isWorkDay && schedule && schedule.start) {
@@ -166,15 +168,13 @@ router.post('/scan', async (req, res) => {
           
           if (now > scheduledTime) {
             lateMinutes = Math.round((now - scheduledTime) / (1000 * 60));
-            console.log(`Employee is late by ${lateMinutes} minutes`);
           }
         } catch (error) {
           console.error('Error calculating late minutes:', error);
         }
       }
 
-      const status = determineAttendanceStatus(now, null, isWorkDay, lateMinutes, 0);
-      const notes = !isWorkDay ? `Scanned on non-work day (${dayName})` : '';
+      const status = isWorkDay ? (lateMinutes > 30 ? 'Late' : 'Present') : 'No Work';
       
       attendance = new Attendance({
         employeeId: employee.employeeId,
@@ -184,21 +184,39 @@ router.post('/scan', async (req, res) => {
         status: status,
         isWorkDay: isWorkDay,
         lateMinutes: lateMinutes,
-        notes: notes
+        notes: !isWorkDay ? `Scanned on non-work day (${dayName})` : ''
       });
 
       await attendance.save();
-      console.log('Time In recorded successfully. Status:', attendance.status);
+      
+      // Log attendance activity
+      await ActivityLog.create({
+        action: 'ATTENDANCE_RECORDED',
+        employeeId: employee.employeeId,
+        employeeName: `${employee.firstName} ${employee.lastName}`,
+        details: {
+          type: 'TIME_IN',
+          time: now,
+          status: status,
+          lateMinutes: lateMinutes,
+          rfidUid: formattedUid
+        },
+        timestamp: new Date()
+      });
+      
       responseMessage = 'SUCCESS:CHECKIN';
       actionType = 'IN';
 
     } else if (attendance.timeIn && !attendance.timeOut) {
-      console.log('Recording Time Out for employee:', employee.employeeId);
+      // Record Time Out
+      console.log('Recording Time Out for:', employee.employeeId);
       
       attendance.timeOut = now;
       actionType = 'OUT';
       
+      // Calculate hours worked and overtime
       let timeData = { hoursWorked: 0, lateMinutes: attendance.lateMinutes || 0, overtimeMinutes: 0 };
+      
       if (isWorkDay && schedule) {
         timeData = calculateTimeDifferences(attendance.timeIn, now, schedule, employee);
       } else {
@@ -206,9 +224,7 @@ router.post('/scan', async (req, res) => {
       }
       
       attendance.hoursWorked = timeData.hoursWorked;
-      attendance.lateMinutes = timeData.lateMinutes;
       attendance.overtimeMinutes = timeData.overtimeMinutes;
-      
       attendance.status = determineAttendanceStatus(
         attendance.timeIn, 
         now, 
@@ -218,17 +234,27 @@ router.post('/scan', async (req, res) => {
       );
 
       await attendance.save();
-      console.log('Time Out recorded successfully:', {
-        hoursWorked: attendance.hoursWorked,
-        status: attendance.status,
-        overtime: attendance.overtimeMinutes,
-        late: attendance.lateMinutes
+      
+      // Log attendance completion
+      await ActivityLog.create({
+        action: 'ATTENDANCE_RECORDED',
+        employeeId: employee.employeeId,
+        employeeName: `${employee.firstName} ${employee.lastName}`,
+        details: {
+          type: 'TIME_OUT',
+          time: now,
+          status: attendance.status,
+          hoursWorked: attendance.hoursWorked,
+          overtimeMinutes: attendance.overtimeMinutes,
+          rfidUid: formattedUid
+        },
+        timestamp: new Date()
       });
-
+      
       responseMessage = 'SUCCESS:CHECKOUT';
 
     } else {
-      console.log('Attendance already completed for today');
+      // Already completed for today
       return res.json({
         message: 'INFO:ALREADY_DONE',
         displayMessage: 'INFO:ALREADY_DONE:Attendance_Complete',
@@ -243,13 +269,6 @@ router.post('/scan', async (req, res) => {
 
     const employeeName = `${employee.firstName} ${employee.lastName}`.replace(/\s+/g, '_');
     const displayMessage = `${responseMessage}:${employeeName}:${actionType}`;
-    
-    console.log('Sending success response:', {
-      message: responseMessage,
-      displayMessage: displayMessage,
-      name: employeeName.replace(/_/g, ' '),
-      action: actionType
-    });
     
     return res.json({
       message: responseMessage,
@@ -268,6 +287,20 @@ router.post('/scan', async (req, res) => {
 
   } catch (error) {
     console.error('RFID Scan Error:', error);
+    
+    // Log system error
+    await ActivityLog.create({
+      action: 'SYSTEM_ERROR',
+      employeeId: 'SYSTEM',
+      employeeName: 'System',
+      details: {
+        error: error.message,
+        endpoint: 'rfid/scan',
+        timestamp: new Date()
+      },
+      timestamp: new Date()
+    });
+    
     return res.status(500).json({ 
       message: 'ERROR:PROCESSING',
       displayMessage: 'ERROR:PROCESSING:Try_Again',
@@ -276,12 +309,11 @@ router.post('/scan', async (req, res) => {
   }
 });
 
-// RFID Assignment Endpoint
-router.post('/assign', async (req, res) => {
+// Enhanced RFID Assignment with UID Scanning
+router.post('/assign-with-scan', async (req, res) => {
   try {
-    console.log('RFID Assignment Request:', req.body);
-    const { employeeId, rfidUid } = req.body;
-
+    const { employeeId, rfidUid, confirm } = req.body;
+    
     if (!employeeId || !rfidUid) {
       return res.status(400).json({ message: 'Employee ID and RFID UID are required' });
     }
@@ -294,19 +326,47 @@ router.post('/assign', async (req, res) => {
 
     const formattedUid = formatRfidUid(cleanUid);
 
-    // Check if RFID is already assigned to another employee
+    // Check if RFID is already assigned to another active employee
     const existingAssignment = await Employee.findOne({ 
       rfidUid: formattedUid,
-      employeeId: { $ne: employeeId }
+      employeeId: { $ne: employeeId },
+      status: 'Active'
     });
 
-    if (existingAssignment) {
+    if (existingAssignment && !confirm) {
       return res.status(400).json({ 
-        message: `RFID already assigned to ${existingAssignment.firstName} ${existingAssignment.lastName}` 
+        message: 'RFID_ALREADY_ASSIGNED',
+        assignedTo: `${existingAssignment.firstName} ${existingAssignment.lastName}`,
+        requiresConfirmation: true
       });
     }
 
-    // Assign RFID to employee
+    // If confirming reassignment, remove from previous employee
+    if (confirm && existingAssignment) {
+      // Create activity log for removal
+      await ActivityLog.create({
+        action: 'RFID_REMOVED_FOR_REASSIGNMENT',
+        employeeId: existingAssignment.employeeId,
+        employeeName: `${existingAssignment.firstName} ${existingAssignment.lastName}`,
+        details: {
+          rfidUid: formattedUid,
+          reassignedTo: employeeId,
+          reason: 'Reassigned to another employee'
+        },
+        timestamp: new Date()
+      });
+
+      // Remove from previous employee
+      await Employee.findOneAndUpdate(
+        { employeeId: existingAssignment.employeeId },
+        { 
+          rfidUid: null,
+          isRfidAssigned: false
+        }
+      );
+    }
+
+    // Assign to new employee
     const employee = await Employee.findOneAndUpdate(
       { employeeId: employeeId },
       { 
@@ -319,6 +379,18 @@ router.post('/assign', async (req, res) => {
     if (!employee) {
       return res.status(404).json({ message: 'Employee not found' });
     }
+
+    // Create activity log for assignment
+    await ActivityLog.create({
+      action: 'RFID_ASSIGNED',
+      employeeId: employee.employeeId,
+      employeeName: `${employee.firstName} ${employee.lastName}`,
+      details: {
+        rfidUid: formattedUid,
+        assignmentDate: new Date()
+      },
+      timestamp: new Date()
+    });
 
     console.log('RFID assigned successfully to:', employee.employeeId);
 
@@ -338,12 +410,30 @@ router.post('/assign', async (req, res) => {
   }
 });
 
-// Remove RFID Assignment
+// Remove RFID with Reason
 router.delete('/assign/:employeeId', async (req, res) => {
   try {
     const { employeeId } = req.params;
+    const { reason, otherReason } = req.body;
     
-    const employee = await Employee.findOneAndUpdate(
+    if (!reason) {
+      return res.status(400).json({ message: 'Removal reason is required' });
+    }
+
+    const validReasons = ['ID_MISSING', 'CARD_DAMAGED', 'EMPLOYEE_TERMINATED', 'SECURITY_ISSUE', 'OTHER'];
+    if (!validReasons.includes(reason)) {
+      return res.status(400).json({ message: 'Invalid removal reason' });
+    }
+
+    const employee = await Employee.findOne({ employeeId: employeeId });
+    if (!employee) {
+      return res.status(404).json({ message: 'Employee not found' });
+    }
+
+    const rfidUid = employee.rfidUid;
+
+    // Remove RFID assignment
+    const updatedEmployee = await Employee.findOneAndUpdate(
       { employeeId: employeeId },
       { 
         rfidUid: null,
@@ -352,13 +442,26 @@ router.delete('/assign/:employeeId', async (req, res) => {
       { new: true }
     );
 
-    if (!employee) {
-      return res.status(404).json({ message: 'Employee not found' });
-    }
+    // Create activity log with reason
+    const activityLog = await ActivityLog.create({
+      action: 'RFID_REMOVED',
+      employeeId: employee.employeeId,
+      employeeName: `${employee.firstName} ${employee.lastName}`,
+      details: {
+        rfidUid: rfidUid,
+        reason: reason,
+        otherReason: otherReason || '',
+        removalDate: new Date()
+      },
+      timestamp: new Date()
+    });
 
     console.log('RFID assignment removed from:', employeeId);
 
-    res.json({ message: 'RFID assignment removed successfully' });
+    res.json({ 
+      message: 'RFID assignment removed successfully',
+      logId: activityLog._id
+    });
 
   } catch (error) {
     console.error('Remove RFID Assignment Error:', error);
@@ -366,148 +469,135 @@ router.delete('/assign/:employeeId', async (req, res) => {
   }
 });
 
-// Get Attendance Records
-router.get('/attendance', async (req, res) => {
+// Get Activity Logs
+router.get('/activity-logs', async (req, res) => {
   try {
-    const { startDate, endDate, employeeId, department } = req.query;
+    const { page = 1, limit = 50, action, employeeId, startDate, endDate } = req.query;
     
     let query = {};
+    if (action) query.action = action;
+    if (employeeId) query.employeeId = employeeId;
     
-    if (startDate && endDate) {
-      const start = new Date(startDate);
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      query.date = { $gte: start, $lte: end };
+    if (startDate || endDate) {
+      query.timestamp = {};
+      if (startDate) query.timestamp.$gte = new Date(startDate);
+      if (endDate) query.timestamp.$lte = new Date(endDate);
     }
     
-    if (employeeId) {
-      query.employeeId = employeeId;
-    }
-
-    if (department) {
-      const employees = await Employee.find({ department: new RegExp(department, 'i') });
-      const employeeIds = employees.map(emp => emp.employeeId);
-      query.employeeId = { $in: employeeIds };
-    }
-
-    const attendance = await Attendance.find(query)
-      .sort({ date: -1, timeIn: -1 })
-      .limit(1000);
+    const logs = await ActivityLog.find(query)
+      .sort({ timestamp: -1 })
+      .limit(limit * 1)
+      .skip((page - 1) * limit);
     
-    res.json(attendance);
-
-  } catch (error) {
-    console.error('Attendance fetch error:', error);
-    res.status(500).json({ message: error.message });
-  }
-});
-
-// Get Today's Attendance
-router.get('/attendance/today', async (req, res) => {
-  try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    
-    const attendance = await Attendance.find({
-      date: {
-        $gte: today,
-        $lt: tomorrow
-      }
-    }).sort({ timeIn: -1 });
-    
-    res.json(attendance);
-
-  } catch (error) {
-    console.error('Today\'s attendance fetch error:', error);
-    res.status(500).json({ message: error.message });
-  }
-});
-
-// Manual Attendance Entry
-router.post('/attendance', async (req, res) => {
-  try {
-    const { employeeId, date, timeIn, timeOut, rfidUid, status } = req.body;
-    
-    let attendance = await Attendance.findOne({
-      employeeId: employeeId,
-      date: new Date(date)
-    });
-
-    if (attendance) {
-      if (timeIn) attendance.timeIn = new Date(`${date}T${timeIn}`);
-      if (timeOut) attendance.timeOut = new Date(`${date}T${timeOut}`);
-      if (status) attendance.status = status;
-      
-      await attendance.save();
-    } else {
-      attendance = new Attendance({
-        employeeId,
-        date: new Date(date),
-        timeIn: timeIn ? new Date(`${date}T${timeIn}`) : null,
-        timeOut: timeOut ? new Date(`${date}T${timeOut}`) : null,
-        rfidUid: rfidUid || 'MANUAL',
-        status: status || 'Present'
-      });
-      
-      await attendance.save();
-    }
-
-    res.json({ message: 'Attendance record saved successfully', attendance });
-  } catch (error) {
-    console.error('Manual attendance error:', error);
-    res.status(500).json({ message: error.message });
-  }
-});
-
-// Update Attendance Record
-router.put('/attendance/:id', async (req, res) => {
-  try {
-    const { timeIn, timeOut, status } = req.body;
-    
-    const attendance = await Attendance.findById(req.params.id);
-    if (!attendance) {
-      return res.status(404).json({ message: 'Attendance record not found' });
-    }
-
-    if (timeIn) attendance.timeIn = new Date(timeIn);
-    if (timeOut) attendance.timeOut = new Date(timeOut);
-    if (status) attendance.status = status;
-
-    await attendance.save();
-    res.json({ message: 'Attendance record updated successfully', attendance });
-  } catch (error) {
-    console.error('Update attendance error:', error);
-    res.status(500).json({ message: error.message });
-  }
-});
-
-// RFID System Status
-router.get('/status', async (req, res) => {
-  try {
-    const employeesWithRfid = await Employee.countDocuments({ 
-      isRfidAssigned: true,
-      status: 'Active'
-    });
-    
-    const totalEmployees = await Employee.countDocuments({ status: 'Active' });
+    const total = await ActivityLog.countDocuments(query);
     
     res.json({
-      rfidAssigned: employeesWithRfid,
-      totalEmployees: totalEmployees,
-      assignmentRate: totalEmployees > 0 ? ((employeesWithRfid / totalEmployees) * 100).toFixed(1) : 0,
-      status: 'Operational',
-      timestamp: new Date().toISOString()
+      logs,
+      totalPages: Math.ceil(total / limit),
+      currentPage: parseInt(page),
+      total
     });
 
   } catch (error) {
-    console.error('RFID status error:', error);
+    console.error('Activity logs fetch error:', error);
     res.status(500).json({ message: error.message });
   }
 });
+
+// Get Monthly Summary starting from RFID assignment date
+router.get('/attendance/monthly-summary/:employeeId', async (req, res) => {
+  try {
+    const { employeeId } = req.params;
+    const { year, month } = req.query;
+    
+    if (!year || !month) {
+      return res.status(400).json({ message: 'Year and month are required' });
+    }
+
+    // Get employee to find RFID assignment date
+    const employee = await Employee.findOne({ employeeId: employeeId });
+    if (!employee) {
+      return res.status(404).json({ message: 'Employee not found' });
+    }
+
+    const startDate = new Date(parseInt(year), parseInt(month) - 1, 1);
+    const endDate = new Date(parseInt(year), parseInt(month), 0);
+    
+    // Only fetch attendance from the date RFID was assigned (if available)
+    let attendanceQuery = {
+      employeeId: employeeId,
+      date: { $gte: startDate, $lte: endDate }
+    };
+
+    // If employee has RFID assignment history, get the assignment date
+    const assignmentLog = await ActivityLog.findOne({
+      employeeId: employeeId,
+      action: 'RFID_ASSIGNED'
+    }).sort({ timestamp: 1 }); // Get first assignment
+
+    if (assignmentLog) {
+      const assignmentDate = new Date(assignmentLog.timestamp);
+      assignmentDate.setHours(0, 0, 0, 0);
+      // Only count attendance from assignment date onward
+      if (assignmentDate > startDate) {
+        attendanceQuery.date.$gte = assignmentDate;
+      }
+    }
+
+    const attendance = await Attendance.find(attendanceQuery);
+    
+    // Calculate work days for the month
+    const totalWorkDays = await calculateWorkDaysForMonth(employee, startDate, endDate, assignmentLog);
+    
+    // Calculate monthly summary
+    const presentDays = attendance.filter(a => 
+      a.status === 'Present' || a.status === 'Completed' || a.status === 'Late'
+    ).length;
+    
+    const summary = {
+      year: parseInt(year),
+      month: parseInt(month),
+      totalDays: endDate.getDate(),
+      totalWorkDays: totalWorkDays,
+      presentDays: presentDays,
+      absentDays: totalWorkDays - presentDays,
+      lateDays: attendance.filter(a => a.status === 'Late').length,
+      halfDays: attendance.filter(a => a.status === 'Half-day').length,
+      totalHours: attendance.reduce((sum, a) => sum + (a.hoursWorked || 0), 0),
+      averageHours: presentDays > 0 ? (attendance.reduce((sum, a) => sum + (a.hoursWorked || 0), 0) / presentDays).toFixed(2) : 0,
+      rfidAssignedDate: assignmentLog ? assignmentLog.timestamp : null,
+      attendanceRecords: attendance.length
+    };
+    
+    res.json(summary);
+  } catch (error) {
+    console.error('Monthly summary error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Helper function to calculate work days for a month
+const calculateWorkDaysForMonth = async (employee, startDate, endDate, assignmentLog) => {
+  let workDays = 0;
+  const currentDate = new Date(startDate);
+  const assignmentDate = assignmentLog ? new Date(assignmentLog.timestamp) : null;
+
+  while (currentDate <= endDate) {
+    // Skip days before RFID assignment
+    if (assignmentDate && currentDate < assignmentDate) {
+      currentDate.setDate(currentDate.getDate() + 1);
+      continue;
+    }
+
+    const dayName = currentDate.toLocaleDateString('en-US', { weekday: 'long' });
+    if (employee.workDays && employee.workDays[dayName]) {
+      workDays++;
+    }
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+
+  return workDays;
+};
 
 // Get Today's Attendance Summary
 router.get('/summary/today', async (req, res) => {
@@ -518,69 +608,7 @@ router.get('/summary/today', async (req, res) => {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
     
-    // Get all attendance records for today
-    const todayAttendance = await Attendance.find({
-      date: {
-        $gte: today,
-        $lt: tomorrow
-      }
-    });
-    
-    // Get total active employees
-    const totalEmployees = await Employee.countDocuments({ status: 'Active' });
-    
-    // Calculate summary statistics
-    let present = 0;
-    let absent = 0;
-    let completed = 0;
-    let late = 0;
-    
-    todayAttendance.forEach(record => {
-      if (record.status === 'Present' || record.status === 'Late') {
-        present++;
-        if (record.status === 'Late') {
-          late++;
-        }
-      } else if (record.status === 'Completed') {
-        completed++;
-        present++; // Completed employees are also present
-      } else if (record.status === 'Absent') {
-        absent++;
-      }
-      // Note: 'No Work' and 'Half-day' are not counted in these basic stats
-    });
-    
-    // Calculate absent employees (total active - present)
-    // This accounts for employees who haven't scanned in yet
-    const actualAbsent = totalEmployees - present;
-    
-    res.json({
-      summary: {
-        present: present,
-        absent: actualAbsent > 0 ? actualAbsent : absent,
-        completed: completed,
-        late: late,
-        totalEmployees: totalEmployees
-      },
-      timestamp: new Date().toISOString()
-    });
-
-  } catch (error) {
-    console.error('Attendance summary error:', error);
-    res.status(500).json({ message: error.message });
-  }
-});
-
-// Alternative: Get comprehensive summary with more details
-router.get('/summary/detailed', async (req, res) => {
-  try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    
-    // Get all attendance records for today
+    // Get all attendance records for today from EMS_Attendance collection
     const todayAttendance = await Attendance.find({
       date: {
         $gte: today,
@@ -592,7 +620,7 @@ router.get('/summary/detailed', async (req, res) => {
     const activeEmployees = await Employee.find({ status: 'Active' });
     const totalEmployees = activeEmployees.length;
     
-    // Initialize counters
+    // Calculate summary statistics
     let present = 0;
     let absent = 0;
     let completed = 0;
@@ -670,41 +698,111 @@ router.get('/summary/detailed', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Detailed attendance summary error:', error);
+    console.error('Today summary error:', error);
     res.status(500).json({ message: error.message });
   }
 });
 
-router.get('/attendance/monthly-summary/:employeeId', async (req, res) => {
+// Get Attendance Records from EMS_Attendance collection
+router.get('/attendance', async (req, res) => {
   try {
-    const { employeeId } = req.params;
-    const { year, month } = req.query;
+    const { startDate, endDate, employeeId, department, page = 1, limit = 100 } = req.query;
     
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0);
+    let query = {};
+    
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      query.date = { $gte: start, $lte: end };
+    }
+    
+    if (employeeId) {
+      query.employeeId = employeeId;
+    }
+
+    if (department) {
+      const employees = await Employee.find({ department: new RegExp(department, 'i') });
+      const employeeIds = employees.map(emp => emp.employeeId);
+      query.employeeId = { $in: employeeIds };
+    }
+
+    const attendance = await Attendance.find(query)
+      .sort({ date: -1, timeIn: -1 })
+      .limit(limit * 1)
+      .skip((page - 1) * limit);
+    
+    const total = await Attendance.countDocuments(query);
+    
+    res.json({
+      attendance,
+      totalPages: Math.ceil(total / limit),
+      currentPage: parseInt(page),
+      total
+    });
+
+  } catch (error) {
+    console.error('Attendance fetch error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get Today's Attendance
+router.get('/attendance/today', async (req, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
     
     const attendance = await Attendance.find({
-      employeeId: employeeId,
-      date: { $gte: startDate, $lte: endDate }
+      date: {
+        $gte: today,
+        $lt: tomorrow
+      }
+    }).sort({ timeIn: -1 });
+    
+    res.json(attendance);
+
+  } catch (error) {
+    console.error('Today\'s attendance fetch error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// RFID System Status
+router.get('/status', async (req, res) => {
+  try {
+    const employeesWithRfid = await Employee.countDocuments({ 
+      isRfidAssigned: true,
+      status: 'Active'
     });
     
-    // Calculate monthly summary
-    const summary = {
-      year: parseInt(year),
-      month: parseInt(month),
-      totalDays: endDate.getDate(),
-      presentDays: attendance.filter(a => a.status === 'Present' || a.status === 'Completed').length,
-      absentDays: attendance.filter(a => a.status === 'Absent').length,
-      lateDays: attendance.filter(a => a.status === 'Late').length,
-      totalHours: attendance.reduce((sum, a) => sum + (a.hoursWorked || 0), 0),
-      averageHours: 0
-    };
+    const totalEmployees = await Employee.countDocuments({ status: 'Active' });
     
-    summary.averageHours = summary.presentDays > 0 ? (summary.totalHours / summary.presentDays).toFixed(2) : 0;
+    // Get today's scan count
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
     
-    res.json(summary);
+    const todayScans = await Attendance.countDocuments({
+      date: { $gte: today, $lt: tomorrow }
+    });
+    
+    res.json({
+      rfidAssigned: employeesWithRfid,
+      totalEmployees: totalEmployees,
+      assignmentRate: totalEmployees > 0 ? ((employeesWithRfid / totalEmployees) * 100).toFixed(1) : 0,
+      todayScans: todayScans,
+      status: 'Operational',
+      timestamp: new Date().toISOString()
+    });
+
   } catch (error) {
-    console.error('Monthly summary error:', error);
+    console.error('RFID status error:', error);
     res.status(500).json({ message: error.message });
   }
 });

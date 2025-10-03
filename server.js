@@ -2,13 +2,19 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-// Import everything first
+// Import routes and middleware
 import connectDB from './src/config/database.js';
 import router from './src/routes/index.js';
 import { errorHandler } from './src/middleware/errorHandler.js';
 import { notFound } from './src/middleware/notFound.js';
 import { handleCastError } from './src/middleware/validationMiddleware.js';
+
+// ES module fix for __dirname
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 dotenv.config();
 
@@ -77,6 +83,9 @@ app.options('*', cors(corsOptions));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+// Static files for uploads
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
 // DATABASE HANDLING
 let dbInitialized = false;
 let isDatabaseConnected = false;
@@ -88,6 +97,9 @@ const initializeDatabase = async () => {
       dbInitialized = true;
       isDatabaseConnected = true;
       console.log('Database initialization complete');
+      
+      // Initialize collections if they don't exist
+      await initializeCollections();
     } catch (error) {
       console.error('Database initialization failed: ' + error.message);
       dbInitialized = true; // Mark as initialized even if failed to prevent repeated attempts
@@ -102,37 +114,102 @@ const initializeDatabase = async () => {
   return isDatabaseConnected;
 };
 
+// Initialize required collections and indexes
+const initializeCollections = async () => {
+  try {
+    const db = mongoose.connection.db;
+    
+    // Ensure EMS_Attendance collection exists with proper indexes
+    const attendanceCollection = db.collection('EMS_Attendance');
+    await attendanceCollection.createIndex({ employeeId: 1, date: 1 }, { unique: true });
+    await attendanceCollection.createIndex({ rfidUid: 1, date: 1 });
+    await attendanceCollection.createIndex({ date: 1 });
+    await attendanceCollection.createIndex({ employeeId: 1, date: -1 });
+    
+    console.log('EMS_Attendance collection initialized with indexes');
+    
+    // Ensure EMS_ActivityLogs collection exists
+    const activityLogsCollection = db.collection('EMS_ActivityLogs');
+    await activityLogsCollection.createIndex({ employeeId: 1, timestamp: -1 });
+    await activityLogsCollection.createIndex({ action: 1, timestamp: -1 });
+    await activityLogsCollection.createIndex({ timestamp: -1 });
+    
+    console.log('EMS_ActivityLogs collection initialized with indexes');
+    
+    // Ensure EMS_Employee collection exists with proper indexes
+    const employeeCollection = db.collection('EMS_Employee');
+    await employeeCollection.createIndex({ employeeId: 1 }, { unique: true });
+    await employeeCollection.createIndex({ email: 1 }, { unique: true });
+    await employeeCollection.createIndex({ rfidUid: 1 }, { sparse: true });
+    await employeeCollection.createIndex({ status: 1 });
+    
+    console.log('EMS_Employee collection initialized with indexes');
+    
+    // Ensure EMS_Department collection exists
+    const departmentCollection = db.collection('EMS_Department');
+    await departmentCollection.createIndex({ name: 1 }, { unique: true });
+    
+    console.log('EMS_Department collection initialized with indexes');
+    
+  } catch (error) {
+    console.error('Error initializing collections:', error.message);
+  }
+};
+
 // Health check endpoint for Vercel
-app.get('/health', (req, res) => {
-  res.status(200).json({
-    success: true,
-    message: 'Server is healthy',
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development',
-    platform: process.env.VERCEL ? 'Vercel Serverless' : 'Traditional Server',
-    database: isDatabaseConnected ? 'Connected' : 'Disconnected',
-    databaseInitialized: dbInitialized
-  });
+app.get('/health', async (req, res) => {
+  try {
+    const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
+    
+    res.status(200).json({
+      success: true,
+      message: 'Server is healthy',
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || 'development',
+      platform: process.env.VERCEL ? 'Vercel Serverless' : 'Traditional Server',
+      database: {
+        status: dbStatus,
+        connected: dbStatus === 'connected',
+        name: mongoose.connection.name || 'BrightonSystem'
+      },
+      databaseInitialized: dbInitialized,
+      uptime: process.uptime(),
+      memory: process.memoryUsage()
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server health check failed',
+      error: error.message
+    });
+  }
 });
 
 // Simple test route at root level to verify server is working
 app.get('/', (req, res) => {
   res.json({
     success: true,
-    message: 'Brighton Registrar API Server is running!',
+    message: 'Brighton EMS API Server is running!',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
-    version: '1.0.0',
+    version: '2.0.0',
     database: isDatabaseConnected ? 'Connected' : 'Disconnected',
     databaseInitialized: dbInitialized,
-    deployment: process.env.VERCEL ? 'Vercel' : 'Local'
+    deployment: process.env.VERCEL ? 'Vercel' : 'Local',
+    features: [
+      'RFID Attendance Tracking',
+      'Employee Management',
+      'Department Management',
+      'Activity Logging',
+      'Real-time Updates'
+    ]
   });
 });
 
 // ADD THESE TEST ROUTES BEFORE THE MAIN ROUTER
 // Test RFID endpoint directly (without /api prefix to avoid redirect issues)
 app.post('/rfid-test', (req, res) => {
-  console.log('RFID Test Endpoint Hit: ' + {
+  console.log('RFID Test Endpoint Hit:', {
     body: req.body,
     headers: req.headers,
     method: req.method,
@@ -154,8 +231,45 @@ app.get('/rfid-status', (req, res) => {
     status: 'operational',
     message: 'RFID system is ready',
     timestamp: new Date().toISOString(),
-    database: isDatabaseConnected ? 'connected' : 'disconnected'
+    database: isDatabaseConnected ? 'connected' : 'disconnected',
+    version: '2.0.0'
   });
+});
+
+// RFID Health Check Endpoint
+app.get('/rfid-health', async (req, res) => {
+  try {
+    // Check database connection
+    const dbStatus = mongoose.connection.readyState === 1;
+    
+    // Check if required collections exist
+    const db = mongoose.connection.db;
+    const collections = await db.listCollections().toArray();
+    const collectionNames = collections.map(col => col.name);
+    
+    const requiredCollections = ['EMS_Attendance', 'EMS_Employee', 'EMS_ActivityLogs', 'EMS_Department'];
+    const missingCollections = requiredCollections.filter(col => !collectionNames.includes(col));
+    
+    res.json({
+      status: 'healthy',
+      database: {
+        connected: dbStatus,
+        collections: {
+          required: requiredCollections,
+          existing: collectionNames.filter(col => requiredCollections.includes(col)),
+          missing: missingCollections
+        }
+      },
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || 'development'
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'unhealthy',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 app.use(handleCastError);
@@ -212,8 +326,8 @@ app.get('/api/test-auth', (req, res) => {
 app.post('/api/rfid/scan', async (req, res) => {
   try {
     console.log('DIRECT RFID SCAN ENDPOINT HIT');
-    console.log('Headers: ' + JSON.stringify(req.headers));
-    console.log('Body: ' + JSON.stringify(req.body));
+    console.log('Headers:', req.headers);
+    console.log('Body:', req.body);
     
     const { uid } = req.body;
     
@@ -225,11 +339,12 @@ app.post('/api/rfid/scan', async (req, res) => {
       });
     }
 
-    // Import the actual RFID handler
-    const Employee = await import('./src/models/Employee.js').then(m => m.default);
-    const Attendance = await import('./src/models/Attendance.js').then(m => m.default);
+    // Import the actual RFID handler models
+    const Employee = await import('./models/Employee.js').then(m => m.default);
+    const Attendance = await import('./models/Attendance.js').then(m => m.default);
+    const ActivityLog = await import('./models/ActivityLog.js').then(m => m.default);
     
-    // Your existing RFID scan logic here...
+    // RFID UID formatting and validation
     const formatRfidUid = (uid) => {
       if (!uid) return null;
       let cleanUid = uid.replace(/\s/g, '').toUpperCase();
@@ -245,7 +360,7 @@ app.post('/api/rfid/scan', async (req, res) => {
     };
 
     const cleanUid = uid.replace(/\s/g, '').toUpperCase();
-    console.log('Cleaned UID: ' + cleanUid);
+    console.log('Cleaned UID:', cleanUid);
 
     if (!validateRfidUid(cleanUid)) {
       console.log('ERROR: Invalid UID format');
@@ -256,7 +371,7 @@ app.post('/api/rfid/scan', async (req, res) => {
     }
 
     const formattedUid = formatRfidUid(cleanUid);
-    console.log('Formatted UID for lookup: ' + formattedUid);
+    console.log('Formatted UID for lookup:', formattedUid);
     
     // Find employee with this RFID UID
     const employee = await Employee.findOne({ 
@@ -265,7 +380,21 @@ app.post('/api/rfid/scan', async (req, res) => {
     });
 
     if (!employee) {
-      console.log('ERROR: No employee found with UID: ' + formattedUid);
+      console.log('ERROR: No employee found with UID:', formattedUid);
+      
+      // Check if this UID exists but assigned to archived/inactive employee
+      const inactiveEmployee = await Employee.findOne({ 
+        rfidUid: formattedUid,
+        status: 'Archived'
+      });
+      
+      if (inactiveEmployee) {
+        return res.json({ 
+          message: 'ERROR:EMPLOYEE_INACTIVE',
+          displayMessage: 'ERROR:EMPLOYEE_INACTIVE:Card_Archived'
+        });
+      }
+      
       return res.json({ 
         message: 'ERROR:NO_ASSIGNED_UID',
         displayMessage: 'ERROR:NO_ASSIGNED_UID:See_Admin',
@@ -273,15 +402,20 @@ app.post('/api/rfid/scan', async (req, res) => {
       });
     }
 
-    console.log('Employee found: ' + JSON.stringify({
-      name: employee.firstName + ' ' + employee.lastName,
+    console.log('Employee found:', {
+      name: `${employee.firstName} ${employee.lastName}`,
       employeeId: employee.employeeId,
       department: employee.department
-    }));
+    });
 
     const now = new Date();
     const today = new Date(now);
     today.setHours(0, 0, 0, 0);
+    
+    // Get work schedule for today
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const dayName = days[today.getDay()];
+    const isWorkDay = employee.workDays && employee.workDays[dayName];
     
     // Find existing attendance record for today
     let attendance = await Attendance.findOne({
@@ -293,26 +427,60 @@ app.post('/api/rfid/scan', async (req, res) => {
     let responseMessage = '';
 
     if (!attendance) {
-      console.log('Recording Time In for employee: ' + employee.employeeId);
+      console.log('Recording Time In for employee:', employee.employeeId);
+      
+      let lateMinutes = 0;
+      if (isWorkDay && employee.workSchedule && employee.workSchedule[dayName]) {
+        try {
+          const schedule = employee.workSchedule[dayName];
+          const [scheduledHour, scheduledMinute] = schedule.start.split(':').map(Number);
+          const scheduledTime = new Date(today);
+          scheduledTime.setHours(scheduledHour, scheduledMinute, 0, 0);
+          
+          if (now > scheduledTime) {
+            lateMinutes = Math.round((now - scheduledTime) / (1000 * 60));
+          }
+        } catch (error) {
+          console.error('Error calculating late minutes:', error);
+        }
+      }
+
+      const status = isWorkDay ? (lateMinutes > 30 ? 'Late' : 'Present') : 'No Work';
       
       attendance = new Attendance({
         employeeId: employee.employeeId,
         date: today,
         timeIn: now,
         rfidUid: formattedUid,
-        status: 'Present',
-        isWorkDay: true,
-        lateMinutes: 0,
-        notes: ''
+        status: status,
+        isWorkDay: isWorkDay,
+        lateMinutes: lateMinutes,
+        notes: !isWorkDay ? `Scanned on non-work day (${dayName})` : ''
       });
 
       await attendance.save();
-      console.log('Time In recorded successfully. Status: ' + attendance.status);
+      
+      // Log attendance activity
+      await ActivityLog.create({
+        action: 'ATTENDANCE_RECORDED',
+        employeeId: employee.employeeId,
+        employeeName: `${employee.firstName} ${employee.lastName}`,
+        details: {
+          type: 'TIME_IN',
+          time: now,
+          status: status,
+          lateMinutes: lateMinutes,
+          rfidUid: formattedUid
+        },
+        timestamp: new Date()
+      });
+      
+      console.log('Time In recorded successfully. Status:', attendance.status);
       responseMessage = 'SUCCESS:CHECKIN';
       actionType = 'IN';
 
     } else if (attendance.timeIn && !attendance.timeOut) {
-      console.log('Recording Time Out for employee: ' + employee.employeeId);
+      console.log('Recording Time Out for employee:', employee.employeeId);
       
       attendance.timeOut = now;
       actionType = 'OUT';
@@ -320,13 +488,29 @@ app.post('/api/rfid/scan', async (req, res) => {
       // Calculate hours worked
       const hoursWorked = parseFloat(((now - attendance.timeIn) / (1000 * 60 * 60)).toFixed(2));
       attendance.hoursWorked = hoursWorked;
-      attendance.status = 'Completed';
+      attendance.status = hoursWorked >= 4 ? 'Completed' : 'Half-day';
 
       await attendance.save();
-      console.log('Time Out recorded successfully: ' + JSON.stringify({
+      
+      // Log attendance completion
+      await ActivityLog.create({
+        action: 'ATTENDANCE_RECORDED',
+        employeeId: employee.employeeId,
+        employeeName: `${employee.firstName} ${employee.lastName}`,
+        details: {
+          type: 'TIME_OUT',
+          time: now,
+          status: attendance.status,
+          hoursWorked: attendance.hoursWorked,
+          rfidUid: formattedUid
+        },
+        timestamp: new Date()
+      });
+      
+      console.log('Time Out recorded successfully:', {
         hoursWorked: attendance.hoursWorked,
         status: attendance.status
-      }));
+      });
 
       responseMessage = 'SUCCESS:CHECKOUT';
 
@@ -335,7 +519,7 @@ app.post('/api/rfid/scan', async (req, res) => {
       return res.json({
         message: 'INFO:ALREADY_DONE',
         displayMessage: 'INFO:ALREADY_DONE:Attendance_Complete',
-        name: employee.firstName + ' ' + employee.lastName,
+        name: `${employee.firstName} ${employee.lastName}`,
         rfid: formattedUid,
         status: attendance.status,
         timeIn: attendance.timeIn ? new Date(attendance.timeIn).toLocaleTimeString() : null,
@@ -344,15 +528,15 @@ app.post('/api/rfid/scan', async (req, res) => {
       });
     }
 
-    const employeeName = (employee.firstName + ' ' + employee.lastName).replace(/\s+/g, '_');
-    const displayMessage = responseMessage + ':' + employeeName + ':' + actionType;
+    const employeeName = `${employee.firstName} ${employee.lastName}`.replace(/\s+/g, '_');
+    const displayMessage = `${responseMessage}:${employeeName}:${actionType}`;
     
-    console.log('Sending success response: ' + JSON.stringify({
+    console.log('Sending success response:', {
       message: responseMessage,
       displayMessage: displayMessage,
       name: employeeName.replace(/_/g, ' '),
       action: actionType
-    }));
+    });
     
     return res.json({
       message: responseMessage,
@@ -362,21 +546,71 @@ app.post('/api/rfid/scan', async (req, res) => {
       type: actionType,
       time: now.toLocaleTimeString(),
       status: attendance.status,
-      isWorkDay: true,
+      isWorkDay: isWorkDay,
       hoursWorked: attendance.hoursWorked,
       lateMinutes: attendance.lateMinutes,
-      overtimeMinutes: attendance.overtimeMinutes,
+      overtimeMinutes: attendance.overtimeMinutes || 0,
       employeeId: employee.employeeId
     });
 
   } catch (error) {
-    console.error('RFID Scan Error: ' + error);
+    console.error('RFID Scan Error:', error);
+    
+    // Log system error
+    try {
+      const ActivityLog = await import('./models/ActivityLog.js').then(m => m.default);
+      await ActivityLog.create({
+        action: 'SYSTEM_ERROR',
+        employeeId: 'SYSTEM',
+        employeeName: 'System',
+        details: {
+          error: error.message,
+          endpoint: 'rfid/scan',
+          timestamp: new Date()
+        },
+        timestamp: new Date()
+      });
+    } catch (logError) {
+      console.error('Failed to log system error:', logError);
+    }
+    
     return res.status(500).json({ 
       message: 'ERROR:PROCESSING',
       displayMessage: 'ERROR:PROCESSING:Try_Again',
       error: error.message
     });
   }
+});
+
+// Real-time updates endpoint for SSE
+app.get('/api/rfid/realtime', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+  });
+
+  // Send initial connection message
+  res.write('data: ' + JSON.stringify({
+    type: 'connected',
+    message: 'Real-time updates connected',
+    timestamp: new Date().toISOString()
+  }) + '\n\n');
+
+  // Send periodic heartbeats
+  const heartbeat = setInterval(() => {
+    res.write('data: ' + JSON.stringify({
+      type: 'heartbeat',
+      timestamp: new Date().toISOString()
+    }) + '\n\n');
+  }, 30000);
+
+  // Clean up on client disconnect
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    console.log('Client disconnected from real-time updates');
+  });
 });
 
 // Error handling middleware
@@ -413,6 +647,31 @@ app.use((err, req, res, next) => {
     });
   }
   
+  // Handle MongoDB duplicate key errors
+  if (err.code === 11000) {
+    const field = Object.keys(err.keyPattern)[0];
+    return res.status(409).json({
+      success: false,
+      message: `${field} already exists`,
+      field: field,
+      error: 'DUPLICATE_ENTRY'
+    });
+  }
+  
+  // Handle MongoDB validation errors
+  if (err.name === 'ValidationError') {
+    const errors = Object.values(err.errors).map(error => ({
+      field: error.path,
+      message: error.message
+    }));
+    
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors
+    });
+  }
+  
   next(err);
 });
 
@@ -430,24 +689,27 @@ const startServer = async () => {
     // Initialize database before starting server
     await initializeDatabase();
     
-    const server = app.listen(PORT, () => {
+    const server = app.listen(PORT, '0.0.0.0', () => {
       console.log('Server running on http://localhost:' + PORT);
       console.log('Environment: ' + (process.env.NODE_ENV || 'development'));
-      console.log('Payload limit: 50MB');
       console.log('Database: ' + (isDatabaseConnected ? 'Connected' : 'Disconnected'));
-      console.log('Health check: http://localhost:' + PORT + '/health');
-      console.log('RFID Test: http://localhost:' + PORT + '/rfid-status');
+      console.log('Payload limit: 50MB');
+      console.log('Available Endpoints:');
+      console.log('   GET  /              - Server status');
+      console.log('   GET  /health        - Health check');
+      console.log('   GET  /rfid-status   - RFID status check');
+      console.log('   GET  /rfid-health   - RFID system health');
+      console.log('   POST /rfid-test     - RFID test endpoint');
+      console.log('   POST /api/rfid/scan - RFID scan endpoint');
+      console.log('   GET  /api/test-auth - Auth test');
+      console.log('   GET  /api/employees - Get employees');
+      console.log('   POST /api/employees - Create employee');
       
       if (process.env.NODE_ENV === 'development') {
-        console.log('Available Routes:');
-        console.log('GET    /              - Server status');
-        console.log('GET    /health        - Health check');
-        console.log('GET    /rfid-status   - RFID status check');
-        console.log('POST   /rfid-test     - RFID test endpoint');
-        console.log('GET    /api/test-auth - Auth test');
-        console.log('POST   /api/rfid/scan - RFID scan endpoint');
-        console.log('GET    /api/employees - Get employees');
-        console.log('POST   /api/employees - Create employee');
+        console.log('Development URLs:');
+        console.log('   Frontend: http://localhost:3000');
+        console.log('   Backend:  http://localhost:' + PORT);
+        console.log('   MongoDB:  ' + (process.env.MONGODB_URL ? 'Connected' : 'Not configured'));
       }
     });
 
@@ -455,7 +717,7 @@ const startServer = async () => {
     server.on('error', (err) => {
       if (err.code === 'EADDRINUSE') {
         console.error('Port ' + PORT + ' is already in use. Please use a different port.');
-        console.log('Try: npx kill-port 5000 or change PORT environment variable');
+        console.log('Try: npx kill-port ' + PORT + ' or change PORT environment variable');
       } else {
         console.error('Server error: ' + err);
       }
@@ -463,10 +725,10 @@ const startServer = async () => {
     });
 
     // Graceful shutdown
-    process.on('SIGINT', () => {
+    const gracefulShutdown = () => {
       console.log('Shutting down server gracefully...');
       server.close(() => {
-        console.log('Server closed');
+        console.log('HTTP server closed');
         if (mongoose.connection.readyState === 1) {
           mongoose.connection.close(false, () => {
             console.log('Database connection closed');
@@ -476,15 +738,26 @@ const startServer = async () => {
           process.exit(0);
         }
       });
+      
+      // Force close after 10 seconds
+      setTimeout(() => {
+        console.error('Could not close connections in time, forcefully shutting down');
+        process.exit(1);
+      }, 10000);
+    };
+    
+    process.on('SIGINT', gracefulShutdown);
+    process.on('SIGTERM', gracefulShutdown);
+    
+    // Handle uncaught exceptions
+    process.on('uncaughtException', (error) => {
+      console.error('Uncaught Exception:', error);
+      gracefulShutdown();
     });
     
-    process.on('SIGTERM', () => {
-      console.log('Received SIGTERM, shutting down gracefully...');
-      server.close(() => {
-        mongoose.connection.close(false, () => {
-          process.exit(0);
-        });
-      });
+    process.on('unhandledRejection', (reason, promise) => {
+      console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+      gracefulShutdown();
     });
     
   } catch (error) {

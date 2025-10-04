@@ -6,7 +6,7 @@ import ReviewInfo from './ReviewInfo';
 import StepProgress from './StepProgress';
 import FormNavigation from './FormNavigation';
 
-const AddEmp = ({ onCancel }) => {
+const AddEmp = ({ onCancel, onEmployeeAdded }) => {
   const initialFormData = {
     firstName: '',
     middleName: '',
@@ -20,8 +20,10 @@ const AddEmp = ({ onCancel }) => {
     sss: '',
     pagibig: '',
     emergencyContact: {
-      type: 'Mobile',
-      number: ''
+      name: '',
+      relationship: '',
+      mobile: '',
+      landline: ''
     },
     currentAddress: {
       blkLt: '',
@@ -66,20 +68,21 @@ const AddEmp = ({ onCancel }) => {
   const [step, setStep] = useState(1);
   const [isMinor, setIsMinor] = useState(false);
   const [errors, setErrors] = useState({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const fetchDepartments = useCallback(async () => {
     try {
-      const token = localStorage.getItem('ems_token');
-      const response = await fetch('http://localhost:5000/api/departments', {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
+      const response = await fetch('http://localhost:5000/api/departments');
       if (response.ok) {
         const data = await response.json();
-        setDepartments(data);
+        if (data.success) {
+          setDepartments(data.data);
+        } else {
+          console.error('Failed to fetch departments:', data.message);
+          setDepartments([]);
+        }
       } else {
-        console.error('Failed to fetch departments');
+        console.error('Failed to fetch departments:', response.status);
         setDepartments([]);
       }
     } catch (error) {
@@ -91,14 +94,14 @@ const AddEmp = ({ onCancel }) => {
   const updatePositions = useCallback(() => {
     let departmentPositions = [];
     switch (formData.department) {
-      case 'Academic':
+      case 'Academic Department':
         departmentPositions = ['Teacher'];
         break;
-      case 'Facilities & Operation':
-        departmentPositions = ['Maintenance', 'Guard'];
+      case 'Administrative Department':
+        departmentPositions = ['Principal', 'Registrar', 'Accounting/Cashier', 'Guidance Counselors','HR Personnel', 'Admission Officer', 'IT Support Staff'];
         break;
-      case 'Administrative & Support':
-        departmentPositions = ['IT Support', 'Cashier', 'Registrar', 'Admission Officer'];
+      case 'Maintenance and Facilities Department':
+        departmentPositions = ['Maintenance Staff', 'Security Guard', 'Janitor and Utility Worker','GroundKeepers', 'Service Driver'];
         break;
       default:
         departmentPositions = [];
@@ -157,6 +160,7 @@ const AddEmp = ({ onCancel }) => {
         if (!formData.lastName.trim()) newErrors.lastName = 'Last name is required';
         if (!formData.gender) newErrors.gender = 'Gender is required';
         if (!formData.birthday) newErrors.birthday = 'Birthday is required';
+        if (!formData.age) newErrors.age = 'Age is required';
         break;
       case 2:
         if (!formData.contactNumber) newErrors.contactNumber = 'Contact number is required';
@@ -165,12 +169,11 @@ const AddEmp = ({ onCancel }) => {
         if (!formData.email.trim()) newErrors.email = 'Email is required';
         else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) newErrors.email = 'Invalid email format';
         
-        if (!formData.emergencyContact.number) {
-          newErrors.emergencyContact = 'Emergency contact number is required';
-        } else if (formData.emergencyContact.type === 'Mobile' && !/^\d{11}$/.test(formData.emergencyContact.number)) {
-          newErrors.emergencyContact = 'Mobile number must be 11 digits';
-        } else if (formData.emergencyContact.type === 'Landline' && !/^\d{8}$/.test(formData.emergencyContact.number)) {
-          newErrors.emergencyContact = 'Landline number must be 8 digits';
+        if (!formData.emergencyContact.name) {
+          newErrors.emergencyContact = 'Emergency contact name is required';
+        }
+        if (!formData.emergencyContact.mobile && !formData.emergencyContact.landline) {
+          newErrors.emergencyContact = 'At least one emergency contact number is required';
         }
         break;
       case 3:
@@ -237,10 +240,6 @@ const AddEmp = ({ onCancel }) => {
       if (name === 'sss' && !/^\d{0,10}$/.test(value)) return;
       if (name === 'pagibig' && !/^\d{0,12}$/.test(value)) return;
       if (name === 'philhealth' && !/^\d{0,12}$/.test(value)) return;
-      if (name === 'emergencyContact.number') {
-        const maxLength = formData.emergencyContact.type === 'Mobile' ? 11 : 8;
-        if (!new RegExp(`^\\d{0,${maxLength}}$`).test(value)) return;
-      }
       
       setFormData(prev => ({ ...prev, [name]: value }));
     }
@@ -264,49 +263,87 @@ const AddEmp = ({ onCancel }) => {
     
     if (!validateStep(4)) return;
     
+    setIsSubmitting(true);
+    
     try {
-      const token = localStorage.getItem('ems_token');
-      const formDataToSend = new FormData();
-      
-      Object.keys(formData).forEach(key => {
-        if (key === 'profilePicture' && formData[key]) {
-          formDataToSend.append(key, formData[key]);
-        } else if (typeof formData[key] === 'object' && key !== 'profilePicture') {
-          formDataToSend.append(key, JSON.stringify(formData[key]));
-        } else {
-          formDataToSend.append(key, formData[key]);
-        }
-      });
+      // Prepare the data for submission
+      const submissionData = {
+        firstName: formData.firstName.trim(),
+        middleName: formData.middleName.trim(),
+        lastName: formData.lastName.trim(),
+        gender: formData.gender,
+        birthday: formData.birthday,
+        age: parseInt(formData.age),
+        contactNumber: formData.contactNumber,
+        email: formData.email.trim(),
+        philhealth: formData.philhealth || '',
+        sss: formData.sss || '',
+        pagibig: formData.pagibig || '',
+        emergencyContact: {
+          name: formData.emergencyContact.name.trim(),
+          relationship: formData.emergencyContact.relationship || '',
+          mobile: formData.emergencyContact.mobile || '',
+          landline: formData.emergencyContact.landline || ''
+        },
+        currentAddress: formData.currentAddress,
+        permanentAddress: formData.permanentAddress,
+        department: formData.department,
+        position: formData.position,
+        teachingLevel: formData.teachingLevel,
+        workType: formData.workType,
+        workSchedule: formData.workSchedule,
+        status: 'Active'
+      };
+
+      console.log('Submitting employee data:', submissionData);
 
       const response = await fetch('http://localhost:5000/api/employees', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`
+          'Content-Type': 'application/json',
         },
-        body: formDataToSend
+        body: JSON.stringify(submissionData)
       });
 
-      if (response.ok) {
+      const result = await response.json();
+
+      if (response.ok && result.success) {
+        console.log('Employee created successfully:', result.data);
         alert('Employee added successfully!');
+        if (onEmployeeAdded) {
+          onEmployeeAdded();
+        }
         onCancel();
       } else {
-        const errorData = await response.json();
-        alert(errorData.message || 'Error adding employee');
+        console.error('Error response:', result);
+        let errorMessage = result.message || 'Error adding employee';
+        
+        if (result.error) {
+          if (typeof result.error === 'string') {
+            errorMessage = result.error;
+          } else if (result.errors) {
+            errorMessage = result.errors.join(', ');
+          }
+        }
+        
+        alert(`Error: ${errorMessage}`);
       }
     } catch (error) {
-      console.error('Error:', error);
-      alert('Error adding employee');
+      console.error('Network error:', error);
+      alert('Network error: Could not connect to server');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const generateEmployeeId = () => {
     const departmentCode = {
-      'Academic': 'ACAT',
-      'Facilities & Operation': 'FAOP',
-      'Administrative & Support': 'ADSU'
+      'Academic Department': 'ACA',
+      'Administrative Department': 'ADM',
+      'Maintenance and Facilities Department': 'MFD'
     }[formData.department] || 'EMP';
     
-    const randomNum = Math.floor(10000 + Math.random() * 90000);
+    const randomNum = Math.floor(1000 + Math.random() * 9000);
     return `${departmentCode}${randomNum}`;
   };
 
@@ -328,8 +365,10 @@ const AddEmp = ({ onCancel }) => {
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-2xl font-bold text-[#400504]">Add New Employee</h2>
         <button
+          type="button"
           onClick={onCancel}
           className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition-colors"
+          disabled={isSubmitting}
         >
           Cancel
         </button>
@@ -375,11 +414,12 @@ const AddEmp = ({ onCancel }) => {
           />
         )}
         
-        <FormNavigation 
+              <FormNavigation 
           step={step} 
           prevStep={prevStep} 
           nextStep={nextStep} 
-          isMinor={isMinor} 
+          isMinor={isMinor}
+          isSubmitting={isSubmitting}  // Add this line
         />
       </form>
     </div>

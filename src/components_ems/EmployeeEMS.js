@@ -9,11 +9,6 @@ import {
   ArrowPathIcon
 } from '@heroicons/react/24/outline';
 
-// Import the modal components
-import EmployeeViewModal from './EmployeeViewModal';
-import EmployeeEditModal from './EmployeeEditModal';
-import ArchiveEmployeeModal from './ArchiveEmployeeModal';
-
 const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
   const [employees, setEmployees] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -23,33 +18,25 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
   const [showSuccess, setShowSuccess] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [imageErrors, setImageErrors] = useState({});
-  
-  // Modal states
-  const [viewModalOpen, setViewModalOpen] = useState(false);
-  const [editModalOpen, setEditModalOpen] = useState(false);
-  const [archiveModalOpen, setArchiveModalOpen] = useState(false);
-  const [selectedEmployee, setSelectedEmployee] = useState(null);
-  const [activeTab, setActiveTab] = useState('active'); // 'active' or 'archived'
+  const [activeTab, setActiveTab] = useState('active');
 
-  // Define fetchEmployees with useCallback to avoid infinite re-renders
   const fetchEmployees = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      const token = localStorage.getItem('ems_token');
-      const response = await fetch(`${apiBaseUrl}/api/employees`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
+      const response = await fetch(`${apiBaseUrl}/api/employees`);
       
       if (!response.ok) {
-        throw new Error('Failed to fetch employees');
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
       
-      const data = await response.json();
-      setEmployees(data);
+      const result = await response.json();
+      
+      if (result.success) {
+        setEmployees(result.data);
+      } else {
+        throw new Error(result.message || 'Failed to fetch employees');
+      }
     } catch (error) {
       console.error('Error fetching employees:', error);
       setError(error.message);
@@ -58,18 +45,15 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
     }
   }, [apiBaseUrl]);
 
-  // Fetch employees on component mount and when refreshTrigger changes
   useEffect(() => {
     fetchEmployees();
   }, [fetchEmployees, refreshTrigger]);
 
-  // Filter employees based on search term and active/archived status
   useEffect(() => {
     const filtered = employees.filter(employee => {
       const matchesSearch = 
         (employee.employeeId && employee.employeeId.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (employee.firstName && employee.firstName.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (employee.middleName && employee.middleName.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (employee.lastName && employee.lastName.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (employee.department && employee.department.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (employee.position && employee.position.toLowerCase().includes(searchTerm.toLowerCase())) ||
@@ -93,88 +77,64 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
     }, 5000);
   };
 
-  // Modal handlers
-  const handleViewEmployee = (employee) => {
-    setSelectedEmployee(employee);
-    setViewModalOpen(true);
-  };
-
-  const handleEditEmployee = (employee) => {
-    setSelectedEmployee(employee);
-    setEditModalOpen(true);
-  };
-
-  const handleArchiveEmployee = (employee) => {
-    setSelectedEmployee(employee);
-    setArchiveModalOpen(true);
-  };
-
-  const handleEmployeeUpdated = () => {
-    fetchEmployees();
-    showSuccessMessage('Employee updated successfully!');
-  };
-
-  const handleEmployeeArchived = () => {
-    fetchEmployees();
-    showSuccessMessage('Employee archived successfully!');
-  };
-
-  const handleEmployeeRestored = () => {
-    fetchEmployees();
-    showSuccessMessage('Employee restored successfully!');
-  };
-
-  // Improved image error handler
-  const handleImageError = (e, employeeId) => {
-    console.log(`Image load error for employee ${employeeId}, using default avatar`);
-    
-    // Mark this image as failed in state
-    setImageErrors(prev => ({
-      ...prev,
-      [employeeId]: true
-    }));
-    
-    // Use default avatar
-    e.target.src = '/default-avatar.png';
-    
-    // Add error styling
-    e.target.classList.add('bg-gray-200', 'border-gray-300');
-    e.target.classList.remove('border-[#cba235]');
-    
-    // Prevent infinite error loop
-    e.target.onerror = null;
-  };
-
-  // Improved profile image URL generator with cache busting
-  const getProfileImageUrl = (profilePicture, employeeId) => {
-    // If this image has previously failed, return default immediately
-    if (imageErrors[employeeId]) {
-      return '/default-avatar.png';
+  const handleArchiveEmployee = async (employee) => {
+    if (!window.confirm(`Are you sure you want to archive ${employee.firstName} ${employee.lastName}?`)) {
+      return;
     }
-    
-    if (!profilePicture) {
-      return '/default-avatar.png';
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/employees/${employee._id}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to archive employee');
+      }
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        await fetchEmployees();
+        showSuccessMessage(`Employee ${employee.firstName} ${employee.lastName} archived successfully!`);
+      } else {
+        throw new Error(result.message);
+      }
+    } catch (error) {
+      console.error('Error archiving employee:', error);
+      alert('Error archiving employee: ' + error.message);
     }
-    
-    // Check if it's a data URL (for newly uploaded images)
-    if (profilePicture.startsWith('data:image')) {
-      return profilePicture;
-    }
-    
-    // Check if it's already a full URL
-    if (profilePicture.startsWith('http')) {
-      return profilePicture;
-    }
-    
-    // For uploaded files, construct the URL with cache busting
-    // Use a random parameter to prevent caching
-    const random = Math.random().toString(36).substring(7);
-    return `${apiBaseUrl}/uploads/${profilePicture}?v=${random}`;
   };
 
-  const formatRfidUid = (uid) => {
-    if (!uid) return 'Not Assigned';
-    return uid.toUpperCase();
+  const handleRestoreEmployee = async (employee) => {
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/employees/${employee._id}/restore`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to restore employee');
+      }
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        await fetchEmployees();
+        showSuccessMessage(`Employee ${employee.firstName} ${employee.lastName} restored successfully!`);
+      } else {
+        throw new Error(result.message);
+      }
+    } catch (error) {
+      console.error('Error restoring employee:', error);
+      alert('Error restoring employee: ' + error.message);
+    }
   };
 
   const getWorkTypeBadge = (workType) => {
@@ -189,22 +149,17 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
       : 'bg-gray-100 text-gray-800 text-xs px-2 py-1 rounded-full';
   };
 
-  const getRfidBadge = (rfidUid, isAssigned) => {
-    if (!rfidUid || !isAssigned) {
+  const getRfidBadge = (rfidUid, isRfidAssigned) => {
+    if (!rfidUid || !isRfidAssigned) {
       return 'bg-gray-100 text-gray-600 text-xs px-2 py-1 rounded-full';
     }
     return 'bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full';
   };
 
-  // Preload default avatar to prevent flickering
-  useEffect(() => {
-    const preloadImage = (src) => {
-      const img = new Image();
-      img.src = src;
-    };
-    
-    preloadImage('/default-avatar.png');
-  }, []);
+  const formatRfidUid = (uid) => {
+    if (!uid) return 'Not Assigned';
+    return uid.toUpperCase();
+  };
 
   // Calculate statistics
   const activeEmployees = employees.filter(e => e.status === 'Active');
@@ -436,14 +391,9 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
                     <td className="px-3 py-2 whitespace-nowrap">
                       <div className="flex items-center">
                         <div className="flex-shrink-0 h-8 w-8">
-                          <img
-                            src={getProfileImageUrl(employee.profilePicture, employee._id)}
-                            alt={`${employee.firstName} ${employee.lastName}`}
-                            className="h-8 w-8 rounded-full object-cover border border-[#cba235] bg-gray-200"
-                            onError={(e) => handleImageError(e, employee._id)}
-                            loading="lazy"
-                            decoding="async"
-                          />
+                          <div className="h-8 w-8 rounded-full bg-gray-200 flex items-center justify-center text-gray-600 text-xs font-bold border border-[#cba235]">
+                            {employee.firstName?.charAt(0)}{employee.lastName?.charAt(0)}
+                          </div>
                         </div>
                         <div className="ml-3">
                           <div className="text-sm font-medium text-gray-900">
@@ -500,21 +450,19 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
                     <td className="px-3 py-2 whitespace-nowrap">
                       <div className="flex items-center space-x-1">
                         <button 
-                          onClick={() => handleViewEmployee(employee)}
                           className="text-blue-600 hover:text-blue-900 p-1 rounded transition-colors"
                           title="View Details"
                         >
                           <EyeIcon className="h-4 w-4" />
                         </button>
                         <button 
-                          onClick={() => handleEditEmployee(employee)}
                           className="text-[#cba235] hover:text-[#dbb545] p-1 rounded transition-colors"
                           title="Edit Employee"
                         >
                           <PencilIcon className="h-4 w-4" />
                         </button>
                         <button 
-                          onClick={() => handleArchiveEmployee(employee)}
+                          onClick={() => employee.status === 'Active' ? handleArchiveEmployee(employee) : handleRestoreEmployee(employee)}
                           className={`p-1 rounded transition-colors ${
                             employee.status === 'Active' 
                               ? 'text-red-600 hover:text-red-800' 
@@ -575,36 +523,6 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
           </div>
         )}
       </div>
-
-      {/* Modals */}
-      {selectedEmployee && (
-        <>
-          <EmployeeViewModal
-            isOpen={viewModalOpen}
-            onClose={() => setViewModalOpen(false)}
-            employee={selectedEmployee}
-            getProfileImageUrl={getProfileImageUrl}
-            handleImageError={handleImageError}
-          />
-          
-          <EmployeeEditModal
-            isOpen={editModalOpen}
-            onClose={() => setEditModalOpen(false)}
-            employee={selectedEmployee}
-            onEmployeeUpdated={handleEmployeeUpdated}
-            apiBaseUrl={apiBaseUrl}
-          />
-          
-          <ArchiveEmployeeModal
-            isOpen={archiveModalOpen}
-            onClose={() => setArchiveModalOpen(false)}
-            employee={selectedEmployee}
-            onEmployeeArchived={handleEmployeeArchived}
-            onEmployeeRestored={handleEmployeeRestored}
-            apiBaseUrl={apiBaseUrl}
-          />
-        </>
-      )}
     </div>
   );
 };

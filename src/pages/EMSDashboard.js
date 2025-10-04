@@ -14,8 +14,6 @@ function EMSDashboard() {
   const [employeeView, setEmployeeView] = useState(
     localStorage.getItem('ems_employeeView') || 'list'
   );
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [loading, setLoading] = useState(true);
 
   // Save state to localStorage whenever it changes
   useEffect(() => {
@@ -26,69 +24,11 @@ function EMSDashboard() {
     localStorage.setItem('ems_employeeView', employeeView);
   }, [employeeView]);
 
-  // Authentication check on component mount
-  useEffect(() => {
-    const checkAuth = async () => {
-      try {
-        const token = localStorage.getItem('ems_token');
-        if (!token) {
-          // Auto-login for demo purposes - remove in production
-          const loginResponse = await fetch('http://localhost:5000/api/auth/login', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              username: 'admin',
-              password: 'admin123'
-            })
-          });
-
-          if (loginResponse.ok) {
-            const data = await loginResponse.json();
-            localStorage.setItem('ems_token', data.token);
-            setIsAuthenticated(true);
-          } else {
-            console.log('Auto-login failed');
-          }
-        } else {
-          // Verify existing token
-          const verifyResponse = await fetch('http://localhost:5000/api/auth/verify', {
-            headers: {
-              'Authorization': `Bearer ${token}`
-            }
-          });
-
-          if (verifyResponse.ok) {
-            setIsAuthenticated(true);
-          } else {
-            localStorage.removeItem('ems_token');
-          }
-        }
-      } catch (error) {
-        console.error('Auth check failed:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    checkAuth();
-  }, []);
-
-  const handleLogout = () => {
-    localStorage.removeItem('ems_token');
-    localStorage.removeItem('ems_activeTab');
-    localStorage.removeItem('ems_employeeView');
-    setIsAuthenticated(false);
-    window.location.reload();
-  };
-
   const menuItems = [
     'Overview',
     'Employee Management',
     'Attendance',
-    'Concern',
-    'Logout'
+    'Concern'
   ];
 
   const renderEmployeeManagementContent = () => {
@@ -108,30 +48,6 @@ function EMSDashboard() {
   };
 
   const renderContent = () => {
-    if (loading) {
-      return (
-        <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#400504]"></div>
-          <span className="ml-4 text-lg">Loading...</span>
-        </div>
-      );
-    }
-
-    if (!isAuthenticated) {
-      return (
-        <div className="p-6 text-center">
-          <h2 className="text-2xl font-bold text-[#400504] mb-4">Authentication Required</h2>
-          <p className="text-gray-600">Please check backend connection and try refreshing.</p>
-          <button 
-            onClick={() => window.location.reload()}
-            className="mt-4 px-6 py-2 bg-[#400504] text-white rounded-md hover:bg-[#300303]"
-          >
-            Retry Connection
-          </button>
-        </div>
-      );
-    }
-
     switch (activeTab) {
       case 'Overview':
         return <OverviewEMS />;
@@ -141,24 +57,10 @@ function EMSDashboard() {
         return <Attendance />;
       case 'Concern':
         return <ConcernEMS />;
-      case 'Logout':
-        handleLogout();
-        return null;
       default:
         return <OverviewEMS />;
     }
   };
-
-  if (loading) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-gray-50">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-[#400504] mx-auto"></div>
-          <p className="mt-4 text-lg text-gray-600">Initializing System...</p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="flex h-screen font-sans bg-gray-50">
@@ -188,12 +90,8 @@ function EMSDashboard() {
             <button
               key={item}
               onClick={() => {
-                if (item === 'Logout') {
-                  handleLogout();
-                } else {
-                  setActiveTab(item);
-                  if (item === 'Employee Management') setEmployeeView('list');
-                }
+                setActiveTab(item);
+                if (item === 'Employee Management') setEmployeeView('list');
               }}
               className={`w-full text-left px-3 py-3 rounded-md transition-all duration-200 font-semibold text-base ${
                 activeTab === item
@@ -220,7 +118,7 @@ function EMSDashboard() {
             <h1 className="text-2xl font-semibold text-[#400504]">{activeTab}</h1>
             <div className="flex items-center space-x-4">
               <span className="text-sm text-gray-600">
-                Welcome, Admin
+                Welcome, Administrator
               </span>
               <div className="w-2 h-2 bg-green-500 rounded-full"></div>
             </div>

@@ -1,25 +1,30 @@
 const mongoose = require('mongoose');
 
 const departmentSchema = new mongoose.Schema({
-  name: {
-    type: String,
-    required: [true, 'Department name is required'],
-    unique: true,
-    trim: true
-  },
-  description: {
-    type: String,
-    required: [true, 'Department description is required'],
-    trim: true
-  },
-  employeeCount: {
-    type: Number,
-    default: 0,
-    min: [0, 'Employee count cannot be negative']
-  }
-}, {
-  collection: 'EMS_Department',
-  timestamps: true
+    name: {
+        type: String,
+        required: true,
+        unique: true,
+        trim: true
+    },
+    description: {
+        type: String,
+        required: true,
+        trim: true
+    },
+    createdAt: {
+        type: Date,
+        default: Date.now
+    },
+    updatedAt: {
+        type: Date,
+        default: Date.now
+    }
 });
 
-module.exports = mongoose.model('Department', departmentSchema);
+departmentSchema.pre('save', function(next) {
+    this.updatedAt = Date.now();
+    next();
+});
+
+module.exports = mongoose.model('Department', departmentSchema, 'EMS_Department');

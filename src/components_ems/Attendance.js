@@ -417,7 +417,6 @@ function Attendance() {
     otherReason: ''
   });
 
-  // const [logsModal, setLogsModal] = useState({ isOpen: false });
   const [viewModal, setViewModal] = useState({ isOpen: false, employee: null });
 
   const realTimeUpdates = useRealTimeUpdates(apiBaseUrl);
@@ -1043,7 +1042,6 @@ function Attendance() {
               <FaDesktop className="mr-1" /> 
               Backend: {apiBaseUrl.replace('http://localhost:', 'Port ')}
             </span>
-            {/* Activity Logs button removed because logsModal is unused */}
           </div>
         </div>
         

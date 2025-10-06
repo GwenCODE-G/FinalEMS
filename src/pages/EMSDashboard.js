@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import EmployeeEMS from '../components_ems/EmployeeEMS';
-import DepartmentEMP from '../components_ems/DepartmentEMP';
+import EmployeeEMS from '../components_ems/DashboardEMS/EmployeeEMS';
+import DepartmentEMP from '../components_ems/DashboardEMS/DepartmentEMP';
 import AddEmp from '../components_ems/AddEmp/AddEmp';
-import OverviewEMS from '../components_ems/OverviewEMS';
-import ConcernEMS from '../components_ems/ConcernEMS';
-import Attendance from '../components_ems/Attendance';
+import OverviewEMS from '../components_ems/DashboardEMS/OverviewEMS';
+import ConcernEMS from '../components_ems/DashboardEMS/ConcernEMS';
+import Attendance from '../components_ems/DashboardEMS/Attendance';
 
 function EMSDashboard() {
   // Load state from localStorage on component mount

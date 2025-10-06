@@ -17,22 +17,23 @@ const ArchiveEmployeeModal = ({
     setError('');
 
     try {
-      const token = localStorage.getItem('ems_token');
       const response = await fetch(`${apiBaseUrl}/api/employees/${employee._id}`, {
         method: 'DELETE',
         headers: {
-          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
         },
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to archive employee');
-      }
+      const result = await response.json();
 
-      onEmployeeArchived();
-      onClose();
+      if (response.ok && result.success) {
+        onEmployeeArchived();
+        onClose();
+      } else {
+        throw new Error(result.message || 'Failed to archive employee');
+      }
     } catch (error) {
+      console.error('Archive error:', error);
       setError(error.message);
     } finally {
       setLoading(false);
@@ -44,23 +45,23 @@ const ArchiveEmployeeModal = ({
     setError('');
 
     try {
-      const token = localStorage.getItem('ems_token');
-      // Use the new restore endpoint instead of generic PUT
       const response = await fetch(`${apiBaseUrl}/api/employees/${employee._id}/restore`, {
-        method: 'PUT',
+        method: 'PATCH',
         headers: {
-          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
         },
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to restore employee');
-      }
+      const result = await response.json();
 
-      onEmployeeRestored();
-      onClose();
+      if (response.ok && result.success) {
+        onEmployeeRestored();
+        onClose();
+      } else {
+        throw new Error(result.message || 'Failed to restore employee');
+      }
     } catch (error) {
+      console.error('Restore error:', error);
       setError(error.message);
     } finally {
       setLoading(false);
@@ -152,7 +153,14 @@ const ArchiveEmployeeModal = ({
               }`}
               disabled={loading}
             >
-              {loading ? 'Processing...' : (isArchived ? 'Restore Employee' : 'Archive Employee')}
+              {loading ? (
+                <span className="flex items-center">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                  Processing...
+                </span>
+              ) : (
+                isArchived ? 'Restore Employee' : 'Archive Employee'
+              )}
             </button>
           </div>
         </div>

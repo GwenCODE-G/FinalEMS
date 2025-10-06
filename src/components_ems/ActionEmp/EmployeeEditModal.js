@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { XMarkIcon, PhotoIcon } from '@heroicons/react/24/outline';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { XMarkIcon } from '@heroicons/react/24/outline';
 
 const EmployeeEditModal = ({ isOpen, onClose, employee, onEmployeeUpdated, apiBaseUrl }) => {
   const [formData, setFormData] = useState({
@@ -7,6 +7,7 @@ const EmployeeEditModal = ({ isOpen, onClose, employee, onEmployeeUpdated, apiBa
     middleName: '',
     lastName: '',
     gender: '',
+    civilStatus: '',
     birthday: '',
     age: '',
     email: '',
@@ -18,22 +19,43 @@ const EmployeeEditModal = ({ isOpen, onClose, employee, onEmployeeUpdated, apiBa
     sss: '',
     philhealth: '',
     pagibig: '',
-    profilePicture: null,
-    removeProfilePicture: false
+    emergencyContact: {
+      name: '',
+      relationship: '',
+      mobile: '',
+      landline: ''
+    },
+    currentAddress: {
+      blkLt: '',
+      street: '',
+      barangay: '',
+      city: '',
+      province: '',
+      postalCode: '',
+      country: 'Philippines'
+    },
+    permanentAddress: {
+      blkLt: '',
+      street: '',
+      barangay: '',
+      city: '',
+      province: '',
+      postalCode: '',
+      country: 'Philippines'
+    }
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [imagePreview, setImagePreview] = useState('');
   const [departments, setDepartments] = useState([]);
   const [positions, setPositions] = useState([]);
 
-  // Department to positions mapping
-  const departmentPositions = {
-    'Academic': ['Teacher'],
-    'Facilities & Operation': ['Maintenance', 'Guard'],
-    'Administrative & Support': ['IT Support', 'Cashier', 'Registrar', 'Admission Officer']
-  };
+  // Use useMemo to memoize the departmentPositions object
+  const departmentPositions = useMemo(() => ({
+    'Academic Department': ['Teacher'],
+    'Administrative Department': ['Principal', 'Registrar', 'Accounting/Cashier', 'Guidance Counselors','HR Personnel', 'Admission Officer', 'IT Support Staff'],
+    'Maintenance and Facilities Department': ['Maintenance Staff', 'Security Guard', 'Janitor and Utility Worker','GroundKeepers', 'Service Driver']
+  }), []);
 
   // Teaching levels
   const teachingLevels = ['Pre-Kindergarten', 'Kindergarten', 'Elementary', 'High-School', 'Senior High-School'];
@@ -46,6 +68,7 @@ const EmployeeEditModal = ({ isOpen, onClose, employee, onEmployeeUpdated, apiBa
         middleName: employee.middleName || '',
         lastName: employee.lastName || '',
         gender: employee.gender || '',
+        civilStatus: employee.civilStatus || '',
         birthday: employee.birthday ? new Date(employee.birthday).toISOString().split('T')[0] : '',
         age: employee.age || '',
         email: employee.email || '',
@@ -57,33 +80,45 @@ const EmployeeEditModal = ({ isOpen, onClose, employee, onEmployeeUpdated, apiBa
         sss: employee.sss || '',
         philhealth: employee.philhealth || '',
         pagibig: employee.pagibig || '',
-        profilePicture: employee.profilePicture || '',
-        removeProfilePicture: false
+        emergencyContact: employee.emergencyContact || {
+          name: '',
+          relationship: '',
+          mobile: '',
+          landline: ''
+        },
+        currentAddress: employee.currentAddress || {
+          blkLt: '',
+          street: '',
+          barangay: '',
+          city: '',
+          province: '',
+          postalCode: '',
+          country: 'Philippines'
+        },
+        permanentAddress: employee.permanentAddress || {
+          blkLt: '',
+          street: '',
+          barangay: '',
+          city: '',
+          province: '',
+          postalCode: '',
+          country: 'Philippines'
+        }
       };
       setFormData(formattedData);
-
-      // Set image preview
-      if (employee.profilePicture) {
-        setImagePreview(`${apiBaseUrl}/uploads/${employee.profilePicture}?t=${new Date().getTime()}`);
-      } else {
-        setImagePreview('/default-avatar.png');
-      }
     }
-  }, [employee, apiBaseUrl]);
+  }, [employee]);
 
   useEffect(() => {
     // Fetch departments
     const fetchDepartments = async () => {
       try {
-        const token = localStorage.getItem('ems_token');
-        const response = await fetch(`${apiBaseUrl}/api/departments`, {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
+        const response = await fetch(`${apiBaseUrl}/api/departments`);
         if (response.ok) {
           const data = await response.json();
-          setDepartments(data);
+          if (data.success) {
+            setDepartments(data.data);
+          }
         }
       } catch (error) {
         console.error('Error fetching departments:', error);
@@ -95,14 +130,18 @@ const EmployeeEditModal = ({ isOpen, onClose, employee, onEmployeeUpdated, apiBa
     }
   }, [isOpen, apiBaseUrl]);
 
-  useEffect(() => {
-    // Update positions when department changes
+  // Update positions when department changes - now properly memoized
+  const updatePositions = useCallback(() => {
     if (formData.department && departmentPositions[formData.department]) {
       setPositions(departmentPositions[formData.department]);
     } else {
       setPositions([]);
     }
-  }, [formData.department]);
+  }, [formData.department, departmentPositions]); // Now departmentPositions is stable
+
+  useEffect(() => {
+    updatePositions();
+  }, [updatePositions]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -111,50 +150,32 @@ const EmployeeEditModal = ({ isOpen, onClose, employee, onEmployeeUpdated, apiBa
     setSuccess('');
 
     try {
-      const token = localStorage.getItem('ems_token');
-      
-      // Create FormData for file upload
-      const submitData = new FormData();
-      
-      // Append all form fields
-      Object.keys(formData).forEach(key => {
-        if (key === 'profilePicture' && formData[key] instanceof File) {
-          submitData.append(key, formData[key]);
-        } else if (key === 'teachingLevel') {
-          submitData.append(key, JSON.stringify(formData[key]));
-        } else if (key === 'removeProfilePicture') {
-          // Only append if we're removing the picture
-          if (formData[key]) {
-            submitData.append(key, 'true');
-          }
-        } else {
-          submitData.append(key, formData[key]);
-        }
-      });
+      const submitData = {
+        ...formData,
+        age: parseInt(formData.age)
+      };
 
       const response = await fetch(`${apiBaseUrl}/api/employees/${employee._id}`, {
         method: 'PUT',
         headers: {
-          'Authorization': `Bearer ${token}`,
-          // Don't set Content-Type for FormData - browser will set it with boundary
+          'Content-Type': 'application/json',
         },
-        body: submitData,
+        body: JSON.stringify(submitData),
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to update employee');
+      const result = await response.json();
+
+      if (response.ok && result.success) {
+        setSuccess('Employee updated successfully!');
+        
+        // Call the update callback after a delay
+        setTimeout(() => {
+          onEmployeeUpdated();
+          onClose();
+        }, 1500);
+      } else {
+        throw new Error(result.message || 'Failed to update employee');
       }
-
-      const updatedEmployee = await response.json();
-      setSuccess('Employee updated successfully!');
-      
-      // Call the update callback
-      setTimeout(() => {
-        onEmployeeUpdated();
-        onClose();
-      }, 1500);
-
     } catch (error) {
       console.error('Error updating employee:', error);
       setError(error.message);
@@ -164,7 +185,7 @@ const EmployeeEditModal = ({ isOpen, onClose, employee, onEmployeeUpdated, apiBa
   };
 
   const handleChange = (e) => {
-    const { name, value, type, checked, files } = e.target;
+    const { name, value, type, checked } = e.target;
 
     if (type === 'checkbox' && name === 'teachingLevel') {
       const updatedLevels = checked
@@ -172,29 +193,18 @@ const EmployeeEditModal = ({ isOpen, onClose, employee, onEmployeeUpdated, apiBa
         : formData.teachingLevel.filter(level => level !== value);
       
       setFormData(prev => ({ ...prev, teachingLevel: updatedLevels }));
-    } else if (type === 'checkbox') {
-      setFormData(prev => ({ ...prev, [name]: checked }));
-    } else if (type === 'file') {
-      const file = files[0];
-      if (file) {
-        setFormData(prev => ({ ...prev, [name]: file }));
-        // Create preview
-        const reader = new FileReader();
-        reader.onload = (e) => setImagePreview(e.target.result);
-        reader.readAsDataURL(file);
-      }
+    } else if (name.includes('.')) {
+      const [parent, child] = name.split('.');
+      setFormData(prev => ({
+        ...prev,
+        [parent]: {
+          ...prev[parent],
+          [child]: value
+        }
+      }));
     } else {
       setFormData(prev => ({ ...prev, [name]: value }));
     }
-  };
-
-  const handleRemovePhoto = () => {
-    setFormData(prev => ({ 
-      ...prev, 
-      profilePicture: null,
-      removeProfilePicture: true 
-    }));
-    setImagePreview('/default-avatar.png');
   };
 
   const calculateAge = (birthday) => {
@@ -224,7 +234,7 @@ const EmployeeEditModal = ({ isOpen, onClose, employee, onEmployeeUpdated, apiBa
       <div className="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
         <div className="fixed inset-0 transition-opacity bg-gray-500 bg-opacity-75" onClick={onClose}></div>
         
-        <div className="relative inline-block w-full max-w-4xl my-8 overflow-hidden text-left align-middle transition-all transform bg-white shadow-xl rounded-2xl">
+        <div className="relative inline-block w-full max-w-6xl my-8 overflow-hidden text-left align-middle transition-all transform bg-white shadow-xl rounded-2xl">
           {/* Header */}
           <div className="flex items-center justify-between p-6 border-b border-gray-200 bg-gradient-to-r from-[#400504] to-[#5a0705]">
             <div className="flex items-center">
@@ -252,23 +262,23 @@ const EmployeeEditModal = ({ isOpen, onClose, employee, onEmployeeUpdated, apiBa
 
           {/* Messages */}
           {error && (
-            <div className="mx-6 mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+            <div className="mx-6 mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
               <div className="flex items-center">
                 <svg className="h-5 w-5 text-red-400 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                <span className="text-red-700 text-sm">{error}</span>
+                <span className="text-red-700">{error}</span>
               </div>
             </div>
           )}
 
           {success && (
-            <div className="mx-6 mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+            <div className="mx-6 mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
               <div className="flex items-center">
                 <svg className="h-5 w-5 text-green-400 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                <span className="text-green-700 text-sm">{success}</span>
+                <span className="text-green-700">{success}</span>
               </div>
             </div>
           )}
@@ -276,74 +286,56 @@ const EmployeeEditModal = ({ isOpen, onClose, employee, onEmployeeUpdated, apiBa
           {/* Content */}
           <form onSubmit={handleSubmit}>
             <div className="p-6 max-h-[70vh] overflow-y-auto">
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Left Column - Profile Picture */}
+              <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                {/* Left Column - Employee Info */}
                 <div className="lg:col-span-1">
                   <div className="bg-gray-50 p-6 rounded-lg border border-gray-200">
-                    <h4 className="text-lg font-semibold text-gray-900 mb-4">Profile Picture</h4>
+                    <h4 className="text-lg font-semibold text-[#400504] mb-4">Employee Information</h4>
                     
-                    <div className="flex flex-col items-center">
-                      <div className="relative">
-                        <img
-                          src={imagePreview}
-                          alt="Profile Preview"
-                          className="h-32 w-32 rounded-full object-cover border-4 border-white shadow-lg"
-                        />
-                        {loading && (
-                          <div className="absolute inset-0 bg-black bg-opacity-50 rounded-full flex items-center justify-center">
-                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
-                          </div>
-                        )}
-                      </div>
-                      
-                      <div className="mt-4 space-y-3 w-full">
-                        <label className="flex items-center justify-center px-4 py-2 bg-white border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
-                          <PhotoIcon className="h-5 w-5 text-gray-600 mr-2" />
-                          <span className="text-sm font-medium text-gray-700">Change Photo</span>
-                          <input
-                            type="file"
-                            name="profilePicture"
-                            onChange={handleChange}
-                            accept="image/*"
-                            className="hidden"
-                            disabled={loading}
-                          />
-                        </label>
-                        
-                        {imagePreview !== '/default-avatar.png' && (
-                          <button
-                            type="button"
-                            onClick={handleRemovePhoto}
-                            className="w-full px-4 py-2 text-sm font-medium text-red-600 bg-white border border-red-300 rounded-lg hover:bg-red-50 transition-colors"
-                            disabled={loading}
-                          >
-                            Remove Photo
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
                     {/* Employee ID Display */}
-                    <div className="mt-6 p-3 bg-white rounded-lg border border-gray-200">
+                    <div className="mb-4 p-3 bg-white rounded-lg border border-gray-200">
                       <label className="block text-xs font-medium text-gray-500 uppercase">Employee ID</label>
                       <p className="text-lg font-mono font-bold text-[#400504]">{employee.employeeId}</p>
+                    </div>
+
+                    {/* Status Display */}
+                    <div className="mb-4 p-3 bg-white rounded-lg border border-gray-200">
+                      <label className="block text-xs font-medium text-gray-500 uppercase">Status</label>
+                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                        employee.status === 'Active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                      }`}>
+                        {employee.status}
+                      </span>
+                    </div>
+
+                    {/* RFID Status Display */}
+                    <div className="p-3 bg-white rounded-lg border border-gray-200">
+                      <label className="block text-xs font-medium text-gray-500 uppercase">RFID Status</label>
+                      <p className="text-sm font-medium text-gray-900">
+                        {employee.isRfidAssigned ? 'Assigned' : 'Not Assigned'}
+                      </p>
+                      {employee.rfidUid && (
+                        <p className="text-xs text-gray-500 mt-1">
+                          UID: {employee.rfidUid.toUpperCase()}
+                        </p>
+                      )}
                     </div>
                   </div>
                 </div>
 
                 {/* Right Column - Form Fields */}
-                <div className="lg:col-span-2">
+                <div className="lg:col-span-3">
                   <div className="space-y-6">
                     {/* Personal Information */}
                     <div className="bg-white p-6 rounded-lg border border-gray-200">
-                      <h4 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+                      <h4 className="text-lg font-semibold text-[#400504] mb-4 flex items-center">
                         <svg className="h-5 w-5 text-[#cba235] mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                         </svg>
                         Personal Information
                       </h4>
                       
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-1">
                             First Name *
@@ -408,6 +400,25 @@ const EmployeeEditModal = ({ isOpen, onClose, employee, onEmployeeUpdated, apiBa
 
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Civil Status
+                          </label>
+                          <select
+                            name="civilStatus"
+                            value={formData.civilStatus}
+                            onChange={handleChange}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
+                            disabled={loading}
+                          >
+                            <option value="">Select Status</option>
+                            <option value="Single">Single</option>
+                            <option value="Married">Married</option>
+                            <option value="Divorced">Divorced</option>
+                            <option value="Widowed">Widowed</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
                             Birthday *
                           </label>
                           <input
@@ -438,7 +449,7 @@ const EmployeeEditModal = ({ isOpen, onClose, employee, onEmployeeUpdated, apiBa
 
                     {/* Contact Information */}
                     <div className="bg-white p-6 rounded-lg border border-gray-200">
-                      <h4 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+                      <h4 className="text-lg font-semibold text-[#400504] mb-4 flex items-center">
                         <svg className="h-5 w-5 text-[#cba235] mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
                         </svg>
@@ -476,18 +487,77 @@ const EmployeeEditModal = ({ isOpen, onClose, employee, onEmployeeUpdated, apiBa
                           />
                         </div>
                       </div>
+
+                      {/* Emergency Contact */}
+                      <div className="mt-4">
+                        <h5 className="text-md font-semibold text-gray-900 mb-3">Emergency Contact</h5>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                              Name
+                            </label>
+                            <input
+                              type="text"
+                              name="emergencyContact.name"
+                              value={formData.emergencyContact.name}
+                              onChange={handleChange}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
+                              disabled={loading}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                              Relationship
+                            </label>
+                            <input
+                              type="text"
+                              name="emergencyContact.relationship"
+                              value={formData.emergencyContact.relationship}
+                              onChange={handleChange}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
+                              disabled={loading}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                              Mobile
+                            </label>
+                            <input
+                              type="text"
+                              name="emergencyContact.mobile"
+                              value={formData.emergencyContact.mobile}
+                              onChange={handleChange}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
+                              disabled={loading}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                              Landline
+                            </label>
+                            <input
+                              type="text"
+                              name="emergencyContact.landline"
+                              value={formData.emergencyContact.landline}
+                              onChange={handleChange}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
+                              disabled={loading}
+                            />
+                          </div>
+                        </div>
+                      </div>
                     </div>
 
                     {/* Employment Information */}
                     <div className="bg-white p-6 rounded-lg border border-gray-200">
-                      <h4 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+                      <h4 className="text-lg font-semibold text-[#400504] mb-4 flex items-center">
                         <svg className="h-5 w-5 text-[#cba235] mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                         </svg>
                         Employment Information
                       </h4>
                       
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-1">
                             Department *
@@ -517,7 +587,7 @@ const EmployeeEditModal = ({ isOpen, onClose, employee, onEmployeeUpdated, apiBa
                             onChange={handleChange}
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
                             required
-                            disabled={loading}
+                            disabled={loading || !formData.department}
                           >
                             <option value="">Select Position</option>
                             {positions.map(pos => (
@@ -546,7 +616,7 @@ const EmployeeEditModal = ({ isOpen, onClose, employee, onEmployeeUpdated, apiBa
                       </div>
 
                       {/* Teaching Levels (only for Academic Teachers) */}
-                      {formData.department === 'Academic' && formData.position === 'Teacher' && (
+                      {formData.department === 'Academic Department' && formData.position === 'Teacher' && (
                         <div className="mt-4">
                           <label className="block text-sm font-medium text-gray-700 mb-2">
                             Teaching Levels
@@ -571,9 +641,64 @@ const EmployeeEditModal = ({ isOpen, onClose, employee, onEmployeeUpdated, apiBa
                       )}
                     </div>
 
+                    {/* Address Information */}
+                    <div className="bg-white p-6 rounded-lg border border-gray-200">
+                      <h4 className="text-lg font-semibold text-[#400504] mb-4 flex items-center">
+                        <svg className="h-5 w-5 text-[#cba235] mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        Address Information
+                      </h4>
+                      
+                      <div className="space-y-4">
+                        <div>
+                          <h5 className="text-md font-semibold text-gray-900 mb-3">Current Address</h5>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {Object.keys(formData.currentAddress || {}).map(field => (
+                              <div key={field}>
+                                <label className="block text-sm font-medium text-gray-700 mb-1 capitalize">
+                                  {field.replace(/([A-Z])/g, ' $1')}
+                                </label>
+                                <input
+                                  type="text"
+                                  name={`currentAddress.${field}`}
+                                  value={formData.currentAddress[field]}
+                                  onChange={handleChange}
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
+                                  disabled={loading}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div>
+                          <h5 className="text-md font-semibold text-gray-900 mb-3">Permanent Address</h5>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {Object.keys(formData.permanentAddress || {}).map(field => (
+                              <div key={field}>
+                                <label className="block text-sm font-medium text-gray-700 mb-1 capitalize">
+                                  {field.replace(/([A-Z])/g, ' $1')}
+                                </label>
+                                <input
+                                  type="text"
+                                  name={`permanentAddress.${field}`}
+                                  value={formData.permanentAddress[field]}
+                                  onChange={handleChange}
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
+                                  disabled={loading}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
                     {/* Government IDs */}
                     <div className="bg-white p-6 rounded-lg border border-gray-200">
-                      <h4 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+                      <h4 className="text-lg font-semibold text-[#400504] mb-4 flex items-center">
                         <svg className="h-5 w-5 text-[#cba235] mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                         </svg>

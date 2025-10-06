@@ -1,3 +1,4 @@
+// frontend/src/components_ems/AddEmp/AdEmp.js
 import React, { useState, useEffect, useCallback } from 'react';
 import BasicInfo from './BasicInfo';
 import ContactInfo from './ContactInfo';
@@ -12,6 +13,7 @@ const AddEmp = ({ onCancel, onEmployeeAdded }) => {
     middleName: '',
     lastName: '',
     gender: '',
+    civilStatus: '',
     birthday: '',
     age: '',
     contactNumber: '',
@@ -20,18 +22,24 @@ const AddEmp = ({ onCancel, onEmployeeAdded }) => {
     sss: '',
     pagibig: '',
     emergencyContact: {
-      name: '',
+      firstName: '',
+      lastName: '',
       relationship: '',
+      type: 'Landline',
       mobile: '',
       landline: ''
     },
     currentAddress: {
-      blkLt: '',
+      blk: '', 
+      lot: '',
       street: '',
       area: '',
       barangay: '',
+      barangayCode: '',
       city: '',
+      cityCode: '',
       province: '',
+      provinceCode: '',
       postalCode: '',
       country: 'Philippines'
     },
@@ -40,8 +48,11 @@ const AddEmp = ({ onCancel, onEmployeeAdded }) => {
       street: '',
       area: '',
       barangay: '',
+      barangayCode: '',
       city: '',
+      cityCode: '',
       province: '',
+      provinceCode: '',
       postalCode: '',
       country: 'Philippines'
     },
@@ -69,6 +80,8 @@ const AddEmp = ({ onCancel, onEmployeeAdded }) => {
   const [isMinor, setIsMinor] = useState(false);
   const [errors, setErrors] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
 
   const fetchDepartments = useCallback(async () => {
     try {
@@ -90,6 +103,19 @@ const AddEmp = ({ onCancel, onEmployeeAdded }) => {
       setDepartments([]);
     }
   }, []);
+
+  const showSuccessMessage = (message) => {
+    setSuccessMessage(message);
+    setShowSuccess(true);
+    setTimeout(() => {
+      setShowSuccess(false);
+      setSuccessMessage('');
+      if (onEmployeeAdded) {
+        onEmployeeAdded();
+      }
+      onCancel();
+    }, 3000);
+  };
 
   const updatePositions = useCallback(() => {
     let departmentPositions = [];
@@ -169,12 +195,24 @@ const AddEmp = ({ onCancel, onEmployeeAdded }) => {
         if (!formData.email.trim()) newErrors.email = 'Email is required';
         else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) newErrors.email = 'Invalid email format';
         
-        if (!formData.emergencyContact.name) {
-          newErrors.emergencyContact = 'Emergency contact name is required';
+        if (!formData.emergencyContact.firstName) {
+          newErrors.emergencyContactFirstName = 'Emergency contact first name is required';
         }
-        if (!formData.emergencyContact.mobile && !formData.emergencyContact.landline) {
-          newErrors.emergencyContact = 'At least one emergency contact number is required';
+        if (!formData.emergencyContact.lastName) {
+          newErrors.emergencyContactLastName = 'Emergency contact last name is required';
         }
+        if (!formData.emergencyContact.relationship) {
+          newErrors.emergencyContactRelationship = 'Emergency contact relationship is required';
+        }
+        if (formData.emergencyContact.type === 'Mobile' && !formData.emergencyContact.mobile) {
+          newErrors.emergencyContactNumber = 'Emergency mobile number is required';
+        } else if (formData.emergencyContact.type === 'Landline' && !formData.emergencyContact.landline) {
+          newErrors.emergencyContactNumber = 'Emergency landline number is required';
+        }
+        
+        if (!formData.currentAddress.province) newErrors.currentAddress = { ...newErrors.currentAddress, province: 'Province is required' };
+        if (!formData.currentAddress.city) newErrors.currentAddress = { ...newErrors.currentAddress, city: 'City is required' };
+        if (!formData.currentAddress.barangay) newErrors.currentAddress = { ...newErrors.currentAddress, barangay: 'Barangay is required' };
         break;
       case 3:
         if (!formData.department) newErrors.department = 'Department is required';
@@ -272,6 +310,7 @@ const AddEmp = ({ onCancel, onEmployeeAdded }) => {
         middleName: formData.middleName.trim(),
         lastName: formData.lastName.trim(),
         gender: formData.gender,
+        civilStatus: formData.civilStatus,
         birthday: formData.birthday,
         age: parseInt(formData.age),
         contactNumber: formData.contactNumber,
@@ -280,8 +319,10 @@ const AddEmp = ({ onCancel, onEmployeeAdded }) => {
         sss: formData.sss || '',
         pagibig: formData.pagibig || '',
         emergencyContact: {
-          name: formData.emergencyContact.name.trim(),
+          firstName: formData.emergencyContact.firstName.trim(),
+          lastName: formData.emergencyContact.lastName.trim(),
           relationship: formData.emergencyContact.relationship || '',
+          type: formData.emergencyContact.type || 'Landline',
           mobile: formData.emergencyContact.mobile || '',
           landline: formData.emergencyContact.landline || ''
         },
@@ -309,11 +350,7 @@ const AddEmp = ({ onCancel, onEmployeeAdded }) => {
 
       if (response.ok && result.success) {
         console.log('Employee created successfully:', result.data);
-        alert('Employee added successfully!');
-        if (onEmployeeAdded) {
-          onEmployeeAdded();
-        }
-        onCancel();
+        showSuccessMessage(`Employee ${formData.firstName} ${formData.lastName} added successfully!`);
       } else {
         console.error('Error response:', result);
         let errorMessage = result.message || 'Error adding employee';
@@ -326,11 +363,12 @@ const AddEmp = ({ onCancel, onEmployeeAdded }) => {
           }
         }
         
-        alert(`Error: ${errorMessage}`);
+        // Show error in a styled message instead of alert
+        showSuccessMessage(`Error: ${errorMessage}`);
       }
     } catch (error) {
       console.error('Network error:', error);
-      alert('Network error: Could not connect to server');
+      showSuccessMessage('Network error: Could not connect to server');
     } finally {
       setIsSubmitting(false);
     }
@@ -348,20 +386,89 @@ const AddEmp = ({ onCancel, onEmployeeAdded }) => {
   };
 
   const nextStep = () => {
-    if (!validateStep(step)) return;
+    console.log('Next button clicked, current step:', step);
+    console.log('Validation errors:', errors);
+    
+    if (!validateStep(step)) {
+      console.log('Validation failed, stopping navigation');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    
+    console.log('Validation passed, proceeding to next step');
     
     if (step === 1 && isMinor) {
+      console.log('Minor detected, showing confirmation');
       if (!window.confirm('This employee is a minor. Are you sure you want to proceed?')) {
         return;
       }
     }
+    
     setStep(step + 1);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const prevStep = () => setStep(step - 1);
+  const prevStep = () => {
+    setStep(step - 1);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   return (
     <div className="w-full max-w-6xl mx-auto p-4">
+      {/* Success Message Overlay */}
+      {showSuccess && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full transform transition-all">
+            <div className="bg-[#400504] p-4 rounded-t-lg">
+              <div className="flex items-center">
+                <div className="flex-shrink-0">
+                  <svg className="h-6 w-6 text-[#cba235]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div className="ml-3">
+                  <h3 className="text-lg font-medium text-white">
+                    {successMessage.includes('Error:') ? 'Error' : 'Success'}
+                  </h3>
+                </div>
+              </div>
+            </div>
+            <div className="p-6">
+              <div className="flex items-center justify-center mb-4">
+                {successMessage.includes('Error:') ? (
+                  <svg className="h-12 w-12 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                ) : (
+                  <svg className="h-12 w-12 text-[#cba235]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                )}
+              </div>
+              <p className={`text-center text-lg font-medium ${
+                successMessage.includes('Error:') ? 'text-red-600' : 'text-gray-900'
+              }`}>
+                {successMessage.replace('Error: ', '')}
+              </p>
+              <p className="text-center text-gray-600 mt-2">
+                {successMessage.includes('Error:') 
+                  ? 'Please try again.' 
+                  : 'The employee has been added to the system.'
+                }
+              </p>
+            </div>
+            <div className="bg-gray-50 px-6 py-3 rounded-b-lg">
+              <div className="flex justify-center">
+                <div className="w-12 h-1 bg-gray-300 rounded-full"></div>
+              </div>
+              <p className="text-center text-xs text-gray-500 mt-2">
+                Closing automatically...
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-2xl font-bold text-[#400504]">Add New Employee</h2>
         <button
@@ -375,6 +482,23 @@ const AddEmp = ({ onCancel, onEmployeeAdded }) => {
       </div>
       
       <StepProgress step={step} />
+      
+      {/* Error Display */}
+      {Object.keys(errors).length > 0 && (
+        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+          <div className="flex items-center">
+            <svg className="h-5 w-5 text-red-400 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <h3 className="text-red-800 font-medium">Please fix the following errors:</h3>
+          </div>
+          <ul className="mt-2 text-red-700 text-sm list-disc list-inside">
+            {Object.values(errors).map((error, index) => (
+              <li key={index}>{typeof error === 'object' ? Object.values(error).join(', ') : error}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       
       <form onSubmit={handleSubmit} className="bg-white p-6 rounded-lg shadow-md w-full">
         {step === 1 && (
@@ -414,12 +538,13 @@ const AddEmp = ({ onCancel, onEmployeeAdded }) => {
           />
         )}
         
-              <FormNavigation 
+        <FormNavigation 
           step={step} 
           prevStep={prevStep} 
           nextStep={nextStep} 
           isMinor={isMinor}
-          isSubmitting={isSubmitting}  // Add this line
+          isSubmitting={isSubmitting}
+          validateStep={validateStep}
         />
       </form>
     </div>

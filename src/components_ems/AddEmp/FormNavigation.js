@@ -1,6 +1,14 @@
+// frontend/src/components_ems/AddEmp/FormNavigation.js
 import React from 'react';
 
-const FormNavigation = ({ step, prevStep, nextStep, isMinor, isSubmitting }) => {
+const FormNavigation = ({ step, prevStep, nextStep, isMinor, isSubmitting, validateStep }) => {
+  const handleNextClick = () => {
+    if (validateStep && !validateStep(step)) {
+      return; // Don't proceed if validation fails
+    }
+    nextStep();
+  };
+
   return (
     <div className="flex justify-between mt-8">
       {step > 1 ? (
@@ -19,7 +27,7 @@ const FormNavigation = ({ step, prevStep, nextStep, isMinor, isSubmitting }) => 
       {step < 4 ? (
         <button
           type="button"
-          onClick={nextStep}
+          onClick={handleNextClick}
           className="px-6 py-3 bg-[#cba235] text-[#400504] rounded-lg hover:bg-[#dbb545] transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
           disabled={isSubmitting}
         >

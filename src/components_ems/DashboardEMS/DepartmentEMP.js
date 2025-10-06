@@ -53,7 +53,6 @@ const DepartmentEMP = () => {
         }
     };
 
-    // Calculate total employees per department
     const getEmployeeCountByDepartment = (departmentName) => {
         return employees.filter(employee => 
             employee.department === departmentName && employee.status === 'Active'
@@ -74,7 +73,6 @@ const DepartmentEMP = () => {
     return (
         <div className="min-h-screen bg-gray-50 py-8 px-4 sm:px-6 lg:px-8">
             <div className="max-w-7xl mx-auto">
-                {/* Header */}
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 pb-6 border-b border-[#cba235]">
                     <div>
                         <h2 className="text-3xl font-bold text-[#400504]">
@@ -94,7 +92,6 @@ const DepartmentEMP = () => {
                     </div>
                 </div>
 
-                {/* Error Message */}
                 {error && (
                     <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-6">
                         <div className="flex justify-between items-center">
@@ -109,7 +106,6 @@ const DepartmentEMP = () => {
                     </div>
                 )}
 
-                {/* Departments Table */}
                 <div className="bg-white rounded-lg shadow-lg border border-[#cba235] overflow-hidden">
                     <div className="overflow-x-auto">
                         <table className="min-w-full divide-y divide-gray-200">
@@ -201,7 +197,6 @@ const DepartmentEMP = () => {
                         </table>
                     </div>
 
-                    {/* Table Footer */}
                     {departments.length > 0 && (
                         <div className="px-6 py-3 bg-gray-50 border-t border-gray-200">
                             <div className="flex justify-between items-center text-sm text-gray-600">
@@ -216,7 +211,6 @@ const DepartmentEMP = () => {
                     )}
                 </div>
 
-                {/* Summary Cards */}
                 {departments.length > 0 && (
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
                         <div className="bg-white p-6 rounded-lg border border-[#cba235] shadow-sm">

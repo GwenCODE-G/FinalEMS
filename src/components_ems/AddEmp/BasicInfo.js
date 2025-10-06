@@ -1,6 +1,22 @@
 import React from 'react';
 
 const BasicInfo = ({ formData, errors, isMinor, handleInputChange }) => {
+  // Function to capitalize first letter of each word
+  const capitalizeWords = (text) => {
+    return text.replace(/\b\w/g, char => char.toUpperCase());
+  };
+
+  const handleTextInput = (e) => {
+    const { name, value } = e.target;
+    const capitalizedValue = capitalizeWords(value);
+    handleInputChange({
+      target: {
+        name: name,
+        value: capitalizedValue
+      }
+    });
+  };
+
   return (
     <div className="space-y-6">
       <h3 className="text-lg font-semibold text-[#400504] border-b pb-2">Basic Information</h3>
@@ -16,7 +32,7 @@ const BasicInfo = ({ formData, errors, isMinor, handleInputChange }) => {
             name="firstName"
             type="text"
             value={formData.firstName || ''}
-            onChange={handleInputChange}
+            onChange={handleTextInput}
             className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors ${
               errors.firstName ? 'border-red-500 bg-red-50' : 'border-gray-300'
             }`}
@@ -39,7 +55,7 @@ const BasicInfo = ({ formData, errors, isMinor, handleInputChange }) => {
             name="middleName"
             type="text"
             value={formData.middleName || ''}
-            onChange={handleInputChange}
+            onChange={handleTextInput}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
             placeholder="Enter middle name"
           />
@@ -55,7 +71,7 @@ const BasicInfo = ({ formData, errors, isMinor, handleInputChange }) => {
             name="lastName"
             type="text"
             value={formData.lastName || ''}
-            onChange={handleInputChange}
+            onChange={handleTextInput}
             className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors ${
               errors.lastName ? 'border-red-500 bg-red-50' : 'border-gray-300'
             }`}
@@ -69,7 +85,7 @@ const BasicInfo = ({ formData, errors, isMinor, handleInputChange }) => {
         </div>
       </div>
       
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Gender */}
         <div>
           <label htmlFor="gender" className="block text-sm font-medium text-gray-700 mb-1">
@@ -92,6 +108,33 @@ const BasicInfo = ({ formData, errors, isMinor, handleInputChange }) => {
           </select>
           {errors.gender && (
             <p id="gender-error" className="mt-1 text-sm text-red-600">{errors.gender}</p>
+          )}
+        </div>
+
+        {/* Civil Status */}
+        <div>
+          <label htmlFor="civilStatus" className="block text-sm font-medium text-gray-700 mb-1">
+            Civil Status *
+          </label>
+          <select
+            id="civilStatus"
+            name="civilStatus"
+            value={formData.civilStatus || ''}
+            onChange={handleInputChange}
+            className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors ${
+              errors.civilStatus ? 'border-red-500 bg-red-50' : 'border-gray-300'
+            }`}
+            required
+          >
+            <option value="">Select Status</option>
+            <option value="Single">Single</option>
+            <option value="Married">Married</option>
+            <option value="Divorced">Divorced</option>
+            <option value="Widowed">Widowed</option>
+            <option value="Separated">Separated</option>
+          </select>
+          {errors.civilStatus && (
+            <p className="mt-1 text-sm text-red-600">{errors.civilStatus}</p>
           )}
         </div>
         
@@ -119,8 +162,8 @@ const BasicInfo = ({ formData, errors, isMinor, handleInputChange }) => {
         </div>
       </div>
       
-      {/* Age Display */}
-      <div>
+      {/* Age Display - Smaller Field */}
+      <div className="max-w-xs">
         <label htmlFor="age-display" className="block text-sm font-medium text-gray-700 mb-1">
           Age
         </label>
@@ -128,7 +171,7 @@ const BasicInfo = ({ formData, errors, isMinor, handleInputChange }) => {
           id="age-display"
           type="text"
           value={`${formData.age || ''} ${isMinor ? '(Minor)' : ''}`}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-600 cursor-not-allowed"
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-600 cursor-not-allowed text-sm"
           readOnly
           aria-live="polite"
           aria-atomic="true"

@@ -8,6 +8,9 @@ import {
   UserGroupIcon,
   ArrowPathIcon
 } from '@heroicons/react/24/outline';
+import ArchiveEmployeeModal from '../ActionEmp/ArchiveEmployeeModal';
+import EmployeeEditModal from '../ActionEmp/EmployeeEditModal';
+import EmployeeViewModal from '../ActionEmp/EmployeeViewModal';
 
 const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
   const [employees, setEmployees] = useState([]);
@@ -19,6 +22,12 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('active');
+  
+  // Modal states
+  const [archiveModalOpen, setArchiveModalOpen] = useState(false);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [viewModalOpen, setViewModalOpen] = useState(false);
+  const [selectedEmployee, setSelectedEmployee] = useState(null);
 
   const fetchEmployees = useCallback(async () => {
     try {
@@ -77,64 +86,45 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
     }, 5000);
   };
 
-  const handleArchiveEmployee = async (employee) => {
-    if (!window.confirm(`Are you sure you want to archive ${employee.firstName} ${employee.lastName}?`)) {
-      return;
-    }
-
-    try {
-      const response = await fetch(`${apiBaseUrl}/api/employees/${employee._id}`, {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to archive employee');
-      }
-      
-      const result = await response.json();
-      
-      if (result.success) {
-        await fetchEmployees();
-        showSuccessMessage(`Employee ${employee.firstName} ${employee.lastName} archived successfully!`);
-      } else {
-        throw new Error(result.message);
-      }
-    } catch (error) {
-      console.error('Error archiving employee:', error);
-      alert('Error archiving employee: ' + error.message);
-    }
+  // Action Handlers
+  const handleViewEmployee = (employee) => {
+    setSelectedEmployee(employee);
+    setViewModalOpen(true);
   };
 
-  const handleRestoreEmployee = async (employee) => {
-    try {
-      const response = await fetch(`${apiBaseUrl}/api/employees/${employee._id}/restore`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to restore employee');
-      }
-      
-      const result = await response.json();
-      
-      if (result.success) {
-        await fetchEmployees();
-        showSuccessMessage(`Employee ${employee.firstName} ${employee.lastName} restored successfully!`);
-      } else {
-        throw new Error(result.message);
-      }
-    } catch (error) {
-      console.error('Error restoring employee:', error);
-      alert('Error restoring employee: ' + error.message);
-    }
+  const handleEditEmployee = (employee) => {
+    setSelectedEmployee(employee);
+    setEditModalOpen(true);
+  };
+
+  const handleArchiveEmployee = (employee) => {
+    setSelectedEmployee(employee);
+    setArchiveModalOpen(true);
+  };
+
+  const handleEmployeeArchived = () => {
+    fetchEmployees();
+    showSuccessMessage(`Employee ${selectedEmployee.firstName} ${selectedEmployee.lastName} archived successfully!`);
+    setArchiveModalOpen(false);
+    setSelectedEmployee(null);
+  };
+
+  const handleEmployeeRestored = () => {
+    fetchEmployees();
+    showSuccessMessage(`Employee ${selectedEmployee.firstName} ${selectedEmployee.lastName} restored successfully!`);
+    setArchiveModalOpen(false);
+    setSelectedEmployee(null);
+  };
+
+  const handleEmployeeUpdated = () => {
+    fetchEmployees();
+    showSuccessMessage(`Employee ${selectedEmployee.firstName} ${selectedEmployee.lastName} updated successfully!`);
+    setEditModalOpen(false);
+    setSelectedEmployee(null);
+  };
+
+  const getInitials = (firstName, lastName) => {
+    return `${firstName?.charAt(0) || ''}${lastName?.charAt(0) || ''}`.toUpperCase();
   };
 
   const getWorkTypeBadge = (workType) => {
@@ -391,8 +381,8 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
                     <td className="px-3 py-2 whitespace-nowrap">
                       <div className="flex items-center">
                         <div className="flex-shrink-0 h-8 w-8">
-                          <div className="h-8 w-8 rounded-full bg-gray-200 flex items-center justify-center text-gray-600 text-xs font-bold border border-[#cba235]">
-                            {employee.firstName?.charAt(0)}{employee.lastName?.charAt(0)}
+                          <div className="h-8 w-8 rounded-full bg-gradient-to-r from-[#400504] to-[#5a0705] flex items-center justify-center text-white text-xs font-bold border border-[#cba235]">
+                            {getInitials(employee.firstName, employee.lastName)}
                           </div>
                         </div>
                         <div className="ml-3">
@@ -450,19 +440,21 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
                     <td className="px-3 py-2 whitespace-nowrap">
                       <div className="flex items-center space-x-1">
                         <button 
+                          onClick={() => handleViewEmployee(employee)}
                           className="text-blue-600 hover:text-blue-900 p-1 rounded transition-colors"
                           title="View Details"
                         >
                           <EyeIcon className="h-4 w-4" />
                         </button>
                         <button 
+                          onClick={() => handleEditEmployee(employee)}
                           className="text-[#cba235] hover:text-[#dbb545] p-1 rounded transition-colors"
                           title="Edit Employee"
                         >
                           <PencilIcon className="h-4 w-4" />
                         </button>
                         <button 
-                          onClick={() => employee.status === 'Active' ? handleArchiveEmployee(employee) : handleRestoreEmployee(employee)}
+                          onClick={() => handleArchiveEmployee(employee)}
                           className={`p-1 rounded transition-colors ${
                             employee.status === 'Active' 
                               ? 'text-red-600 hover:text-red-800' 
@@ -523,6 +515,30 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
           </div>
         )}
       </div>
+
+      {/* Modals */}
+      <ArchiveEmployeeModal
+        isOpen={archiveModalOpen}
+        onClose={() => setArchiveModalOpen(false)}
+        employee={selectedEmployee}
+        onEmployeeArchived={handleEmployeeArchived}
+        onEmployeeRestored={handleEmployeeRestored}
+        apiBaseUrl={apiBaseUrl}
+      />
+
+      <EmployeeEditModal
+        isOpen={editModalOpen}
+        onClose={() => setEditModalOpen(false)}
+        employee={selectedEmployee}
+        onEmployeeUpdated={handleEmployeeUpdated}
+        apiBaseUrl={apiBaseUrl}
+      />
+
+      <EmployeeViewModal
+        isOpen={viewModalOpen}
+        onClose={() => setViewModalOpen(false)}
+        employee={selectedEmployee}
+      />
     </div>
   );
 };

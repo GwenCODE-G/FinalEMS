@@ -104,10 +104,12 @@ io.on('connection', (socket) => {
 const departmentRoutes = require('./routes/departments');
 const employeeRoutes = require('./routes/employees');
 const rfidRoutes = require('./routes/rfidRoutes');
+const overviewRoutes = require('./routes/overview');
 
 app.use('/api/departments', departmentRoutes);
 app.use('/api/employees', employeeRoutes);
 app.use('/api/rfid', rfidRoutes);
+app.use('/api/overview', overviewRoutes);
 
 app.get('/api/test', (req, res) => {
     res.json({
@@ -165,6 +167,7 @@ app.get('/', (req, res) => {
             employees: '/api/employees',
             departments: '/api/departments',
             rfid: '/api/rfid',
+            overview: '/api/overview',
             test: '/api/test',
             health: '/health'
         }

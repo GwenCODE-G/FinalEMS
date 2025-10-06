@@ -29,23 +29,39 @@ const getCurrentDateTime = () => {
   return new Date(now.getTime() + offset);
 };
 
-const checkWorkingHours = (currentTime) => {
+const checkTimeInHours = (currentTime) => {
   const hour = currentTime.getHours();
   const minute = currentTime.getMinutes();
   const totalMinutes = hour * 60 + minute;
   
-  const workStart = 6 * 60;    // 6:00 AM
-  const workEnd = 18 * 60;     // 6:00 PM
+  const timeInStart = 6 * 60;    // 6:00 AM
+  const timeInEnd = 18 * 60;     // 6:00 PM
   
-  if (totalMinutes < workStart) {
+  if (totalMinutes < timeInStart) {
     return { allowed: false, message: 'WORK_NOT_START' };
-  } else if (totalMinutes > workEnd) {
-    return { allowed: false, message: 'WORK_TIME_DONE' };
+  } else if (totalMinutes > timeInEnd) {
+    return { allowed: false, message: 'TIMEIN_NOT_ALLOWED' };
   } else {
     return { allowed: true, message: 'WITHIN_WORK_HOURS' };
   }
 };
 
+const checkTimeOutHours = (currentTime) => {
+  const hour = currentTime.getHours();
+  const minute = currentTime.getMinutes();
+  const totalMinutes = hour * 60 + minute;
+  
+  const timeOutStart = 6 * 60;    // 6:00 AM
+  const timeOutEnd = 19 * 60;     // 7:00 PM (extended for time out)
+  
+  if (totalMinutes < timeOutStart) {
+    return { allowed: false, message: 'TOO_EARLY_FOR_TIMEOUT' };
+  } else {
+    return { allowed: true, message: 'TIMEOUT_ALLOWED' };
+  }
+};
+
+// RFID Scan Endpoint
 router.post('/scan/', async (req, res) => {
   try {
     const { uid, device = 'RFID-Reader', timestamp } = req.body;
@@ -118,17 +134,6 @@ router.post('/scan/', async (req, res) => {
     console.log('Current time (GMT+8):', now.toString());
     console.log('Today date:', today);
 
-    const workHoursCheck = checkWorkingHours(now);
-    
-    if (!workHoursCheck.allowed) {
-      console.log('Outside working hours:', workHoursCheck.message);
-      return res.status(200).json({
-        success: false,
-        message: workHoursCheck.message === 'WORK_NOT_START' ? 'Work has not started yet' : 'Working time is done',
-        displayMessage: workHoursCheck.message
-      });
-    }
-
     let attendance = await Attendance.findOne({
       employeeId: employee.employeeId,
       date: today
@@ -139,6 +144,18 @@ router.post('/scan/', async (req, res) => {
     let responseData;
 
     if (!attendance) {
+      // Time In logic
+      const timeInCheck = checkTimeInHours(now);
+      
+      if (!timeInCheck.allowed) {
+        console.log('Outside time in hours:', timeInCheck.message);
+        return res.status(200).json({
+          success: false,
+          message: timeInCheck.message === 'WORK_NOT_START' ? 'Work has not started yet' : 'Time in not allowed after 6:00 PM',
+          displayMessage: timeInCheck.message
+        });
+      }
+
       const workStartTime = new Date(now);
       workStartTime.setHours(8, 0, 0, 0);
       
@@ -159,13 +176,12 @@ router.post('/scan/', async (req, res) => {
         date: today,
         timeIn: now,
         status: status,
-        lateMinutes: lateMinutes
+        lateMinutes: lateMinutes,
+        dateEmployed: employee.dateEmployed
       });
 
       await attendance.save();
       console.log('New attendance record created for time in');
-
-      await Attendance.setRfidAssignmentDate(employee.employeeId);
 
       responseData = {
         success: true,
@@ -184,6 +200,18 @@ router.post('/scan/', async (req, res) => {
       console.log('Time In recorded for:', employee.employeeId, 'Status:', status);
 
     } else if (attendance.timeIn && !attendance.timeOut) {
+      // Time Out logic
+      const timeOutCheck = checkTimeOutHours(now);
+      
+      if (!timeOutCheck.allowed) {
+        console.log('Too early for time out:', timeOutCheck.message);
+        return res.status(200).json({
+          success: false,
+          message: 'Too early for time out',
+          displayMessage: 'TOO_EARLY_FOR_TIMEOUT'
+        });
+      }
+
       const timeIn = new Date(attendance.timeIn);
       const timeDifference = (now - timeIn) / 1000;
       
@@ -273,6 +301,7 @@ router.post('/scan/', async (req, res) => {
   }
 });
 
+// Assign RFID to Employee
 router.post('/assign/', async (req, res) => {
   try {
     const { employeeId, rfidUid } = req.body;
@@ -370,6 +399,7 @@ router.post('/assign/', async (req, res) => {
   }
 });
 
+// Remove RFID Assignment
 router.delete('/assign/:employeeId', async (req, res) => {
   try {
     const { employeeId } = req.params;
@@ -429,6 +459,36 @@ router.delete('/assign/:employeeId', async (req, res) => {
   }
 });
 
+// Get Real-Time Summary (from employment date until present)
+router.get('/summary/realtime/:employeeId', async (req, res) => {
+  try {
+    const { employeeId } = req.params;
+    
+    if (!employeeId) {
+      return res.status(200).json({
+        success: false,
+        message: 'Employee ID is required'
+      });
+    }
+
+    const summary = await Attendance.getRealTimeSummaryFromEmployment(employeeId);
+
+    res.status(200).json({
+      success: true,
+      data: summary
+    });
+
+  } catch (error) {
+    console.error('Error fetching real-time summary:', error);
+    res.status(200).json({
+      success: false,
+      message: 'Error fetching real-time summary',
+      error: error.message
+    });
+  }
+});
+
+// Get Monthly Summary (with real-time updates)
 router.get('/summary/monthly/', async (req, res) => {
   try {
     const { employeeId, year, month } = req.query;
@@ -440,54 +500,15 @@ router.get('/summary/monthly/', async (req, res) => {
       });
     }
 
-    const employee = await Employee.findOne({ employeeId: employeeId });
-    if (!employee) {
-      return res.status(200).json({
-        success: false,
-        message: 'Employee not found'
-      });
-    }
-
-    const summary = await Attendance.getMonthlySummaryFromAssignment(
+    const summary = await Attendance.getMonthlySummaryFromEmployment(
       employeeId, 
       parseInt(year), 
       parseInt(month)
     );
 
-    const attendanceRate = summary.totalWorkDays > 0 ? 
-      ((summary.presentDays / summary.totalWorkDays) * 100) : 0;
-    
-    const efficiency = summary.presentDays > 0 ? 
-      ((summary.totalHours / (summary.presentDays * 8)) * 100) : 0;
-
     res.status(200).json({
       success: true,
-      data: {
-        ...summary,
-        metrics: {
-          attendanceRate: Math.round(attendanceRate * 10) / 10,
-          efficiency: Math.round(efficiency * 10) / 10,
-          totalScheduledHours: summary.totalWorkDays * 8,
-          hoursUtilization: summary.totalHours > 0 ? 
-            Math.round((summary.totalHours / (summary.totalWorkDays * 8)) * 100) : 0
-        },
-        employee: {
-          name: `${employee.firstName} ${employee.lastName}`,
-          department: employee.department,
-          position: employee.position,
-          employeeId: employee.employeeId,
-          dateEmployed: employee.dateEmployed
-        },
-        period: {
-          month: parseInt(month),
-          year: parseInt(year),
-          monthName: new Date(year, month - 1).toLocaleDateString('en', { month: 'long' }),
-          startDate: summary.startDate,
-          endDate: summary.endDate,
-          assignmentDate: summary.assignmentDate,
-          totalCalendarDays: new Date(year, month, 0).getDate()
-        }
-      }
+      data: summary
     });
 
   } catch (error) {
@@ -500,11 +521,12 @@ router.get('/summary/monthly/', async (req, res) => {
   }
 });
 
+// Get Assignment History (real-time from employment to present)
 router.get('/assignment-history/:employeeId', async (req, res) => {
   try {
     const { employeeId } = req.params;
     
-    const assignmentDate = await Attendance.getRfidAssignmentDate(employeeId);
+    const employmentDate = await Attendance.getEmploymentDate(employeeId);
     const employee = await Employee.findOne({ employeeId: employeeId });
     
     if (!employee) {
@@ -514,9 +536,13 @@ router.get('/assignment-history/:employeeId', async (req, res) => {
       });
     }
 
-    const attendanceRecords = await Attendance.find({ employeeId: employeeId })
-      .sort({ date: -1 })
-      .limit(50);
+    // Get REAL-TIME attendance history from employment date until today
+    const attendanceRecords = await Attendance.getAttendanceHistory(employeeId);
+
+    // Get real-time work days count
+    const totalWorkDays = await Attendance.getWorkDaysSinceEmployment(employeeId);
+    const presentDays = attendanceRecords.filter(record => record.timeIn).length;
+    const absentDays = Math.max(0, totalWorkDays - presentDays);
 
     res.status(200).json({
       success: true,
@@ -526,13 +552,18 @@ router.get('/assignment-history/:employeeId', async (req, res) => {
           employeeId: employee.employeeId,
           department: employee.department,
           rfidUid: employee.rfidUid,
-          isRfidAssigned: employee.isRfidAssigned
+          isRfidAssigned: employee.isRfidAssigned,
+          dateEmployed: employee.dateEmployed
         },
-        assignmentInfo: {
-          assignmentDate: assignmentDate,
-          daysSinceAssignment: assignmentDate ? 
-            Math.floor((new Date() - new Date(assignmentDate)) / (1000 * 60 * 60 * 24)) : 0,
-          totalAttendanceRecords: attendanceRecords.length
+        employmentInfo: {
+          employmentDate: employmentDate,
+          daysSinceEmployment: employmentDate ? 
+            Math.floor((new Date() - new Date(employmentDate)) / (1000 * 60 * 60 * 24)) : 0,
+          totalWorkDays: totalWorkDays,
+          presentDays: presentDays,
+          absentDays: absentDays,
+          totalAttendanceRecords: attendanceRecords.length,
+          lastUpdated: new Date()
         },
         recentAttendance: attendanceRecords
       }
@@ -548,10 +579,11 @@ router.get('/assignment-history/:employeeId', async (req, res) => {
   }
 });
 
+// Debug RFID Assignments
 router.get('/debug/rfid-assignments/', async (req, res) => {
   try {
     const employees = await Employee.find({ status: 'Active' })
-      .select('employeeId firstName lastName rfidUid department position status')
+      .select('employeeId firstName lastName rfidUid department position status dateEmployed')
       .sort('firstName');
     
     const assignments = employees.map(emp => ({
@@ -562,7 +594,8 @@ router.get('/debug/rfid-assignments/', async (req, res) => {
       rfidUid: emp.rfidUid,
       normalizedUid: normalizeUid(emp.rfidUid),
       hasRfid: !!emp.rfidUid,
-      status: emp.status
+      status: emp.status,
+      dateEmployed: emp.dateEmployed
     }));
 
     res.status(200).json({
@@ -583,6 +616,7 @@ router.get('/debug/rfid-assignments/', async (req, res) => {
   }
 });
 
+// Test UID Match
 router.post('/test-uid-match/', async (req, res) => {
   try {
     const { uid } = req.body;
@@ -606,7 +640,8 @@ router.post('/test-uid-match/', async (req, res) => {
           name: `${employee.firstName} ${employee.lastName}`,
           employeeId: employee.employeeId,
           storedRfidUid: employee.rfidUid,
-          normalizedStoredUid: normalizeUid(employee.rfidUid)
+          normalizedStoredUid: normalizeUid(employee.rfidUid),
+          dateEmployed: employee.dateEmployed
         } : null
       }
     });
@@ -620,6 +655,7 @@ router.post('/test-uid-match/', async (req, res) => {
   }
 });
 
+// Get Today's Attendance
 router.get('/attendance/today/', async (req, res) => {
   try {
     const today = getCurrentDate();
@@ -646,6 +682,7 @@ router.get('/attendance/today/', async (req, res) => {
   }
 });
 
+// Get Attendance with Date Range
 router.get('/attendance/', async (req, res) => {
   try {
     const { startDate, endDate, employeeId } = req.query;
@@ -683,6 +720,7 @@ router.get('/attendance/', async (req, res) => {
   }
 });
 
+// Get Today's Summary
 router.get('/summary/today/', async (req, res) => {
   try {
     const today = getCurrentDate();
@@ -722,6 +760,7 @@ router.get('/summary/today/', async (req, res) => {
   }
 });
 
+// Get System Status
 router.get('/status/', (req, res) => {
   res.status(200).json({
     success: true,
@@ -736,6 +775,7 @@ router.get('/status/', (req, res) => {
   });
 });
 
+// Get Assigned RFID Cards
 router.get('/assigned/', async (req, res) => {
   try {
     const assignedCards = await UID.find().sort({ assignedAt: -1 });
@@ -753,6 +793,7 @@ router.get('/assigned/', async (req, res) => {
   }
 });
 
+// Test Endpoint
 router.get('/test/', async (req, res) => {
   try {
     const employeeCount = await Employee.countDocuments();
@@ -776,6 +817,156 @@ router.get('/test/', async (req, res) => {
     res.status(200).json({
       success: false,
       message: 'RFID System Test Failed',
+      error: error.message
+    });
+  }
+});
+
+// Get Employee Work Schedule
+router.get('/employee/:employeeId/schedule', async (req, res) => {
+  try {
+    const { employeeId } = req.params;
+    
+    const employee = await Employee.findOne({ employeeId: employeeId })
+      .select('employeeId firstName lastName department position workSchedule dateEmployed');
+    
+    if (!employee) {
+      return res.status(200).json({
+        success: false,
+        message: 'Employee not found'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        employee: {
+          name: `${employee.firstName} ${employee.lastName}`,
+          employeeId: employee.employeeId,
+          department: employee.department,
+          position: employee.position,
+          dateEmployed: employee.dateEmployed
+        },
+        workSchedule: employee.workSchedule
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching employee schedule:', error);
+    res.status(200).json({
+      success: false,
+      message: 'Error fetching employee schedule',
+      error: error.message
+    });
+  }
+});
+
+// Get Attendance Trends (real-time)
+router.get('/attendance/trends/:employeeId', async (req, res) => {
+  try {
+    const { employeeId } = req.params;
+    const { months = 6 } = req.query;
+    
+    const employee = await Employee.findOne({ employeeId: employeeId });
+    
+    if (!employee) {
+      return res.status(200).json({
+        success: false,
+        message: 'Employee not found'
+      });
+    }
+
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setMonth(startDate.getMonth() - parseInt(months));
+
+    // Adjust start date to employment date if employed later
+    const employmentDate = new Date(employee.dateEmployed);
+    const actualStartDate = employmentDate > startDate ? employmentDate : startDate;
+
+    if (actualStartDate > endDate) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          employee: {
+            name: `${employee.firstName} ${employee.lastName}`,
+            employeeId: employee.employeeId
+          },
+          trends: [],
+          period: {
+            startDate: actualStartDate,
+            endDate: endDate,
+            employmentDate: employmentDate
+          }
+        }
+      });
+    }
+
+    const startDateStr = actualStartDate.toISOString().split('T')[0];
+    const endDateStr = endDate.toISOString().split('T')[0];
+
+    const attendance = await Attendance.find({
+      employeeId: employeeId,
+      date: {
+        $gte: startDateStr,
+        $lte: endDateStr
+      }
+    }).sort({ date: 1 });
+
+    // Group by month
+    const monthlyTrends = {};
+    attendance.forEach(record => {
+      const date = new Date(record.date);
+      const monthKey = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}`;
+      
+      if (!monthlyTrends[monthKey]) {
+        monthlyTrends[monthKey] = {
+          present: 0,
+          late: 0,
+          totalHours: 0,
+          totalMinutes: 0
+        };
+      }
+      
+      monthlyTrends[monthKey].present++;
+      if (record.status === 'Late') {
+        monthlyTrends[monthKey].late++;
+      }
+      monthlyTrends[monthKey].totalMinutes += record.totalMinutes || 0;
+      monthlyTrends[monthKey].totalHours = Math.round((monthlyTrends[monthKey].totalMinutes / 60) * 10) / 10;
+    });
+
+    const trends = Object.entries(monthlyTrends).map(([month, data]) => ({
+      month,
+      present: data.present,
+      late: data.late,
+      totalHours: data.totalHours,
+      averageHours: data.present > 0 ? Math.round((data.totalHours / data.present) * 10) / 10 : 0
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: {
+        employee: {
+          name: `${employee.firstName} ${employee.lastName}`,
+          employeeId: employee.employeeId,
+          department: employee.department
+        },
+        trends: trends.sort((a, b) => a.month.localeCompare(b.month)),
+        period: {
+          startDate: actualStartDate,
+          endDate: endDate,
+          employmentDate: employmentDate,
+          months: trends.length
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching attendance trends:', error);
+    res.status(200).json({
+      success: false,
+      message: 'Error fetching attendance trends',
       error: error.message
     });
   }

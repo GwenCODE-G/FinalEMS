@@ -5,21 +5,48 @@ const UID = require('../models/UID');
 
 const router = express.Router();
 
-// Helper function to normalize RFID UID (remove spaces, uppercase)
 const normalizeUid = (uid) => {
   if (!uid) return '';
   return uid.toString().replace(/\s/g, '').toUpperCase();
 };
 
-// Helper function to format UID for display (add spaces every 2 chars)
 const formatUidForDisplay = (uid) => {
   if (!uid) return '';
   const cleanUid = normalizeUid(uid);
   return cleanUid.match(/.{1,2}/g)?.join(' ').toUpperCase() || cleanUid;
 };
 
-// RFID Scan for Attendance
-router.post('/scan', async (req, res) => {
+const getCurrentDate = () => {
+  const now = new Date();
+  const offset = 8 * 60 * 60 * 1000; // GMT+8 in milliseconds
+  const phTime = new Date(now.getTime() + offset);
+  return phTime.toISOString().split('T')[0];
+};
+
+const getCurrentDateTime = () => {
+  const now = new Date();
+  const offset = 8 * 60 * 60 * 1000; // GMT+8 in milliseconds
+  return new Date(now.getTime() + offset);
+};
+
+const checkWorkingHours = (currentTime) => {
+  const hour = currentTime.getHours();
+  const minute = currentTime.getMinutes();
+  const totalMinutes = hour * 60 + minute;
+  
+  const workStart = 6 * 60;    // 6:00 AM
+  const workEnd = 18 * 60;     // 6:00 PM
+  
+  if (totalMinutes < workStart) {
+    return { allowed: false, message: 'WORK_NOT_START' };
+  } else if (totalMinutes > workEnd) {
+    return { allowed: false, message: 'WORK_TIME_DONE' };
+  } else {
+    return { allowed: true, message: 'WITHIN_WORK_HOURS' };
+  }
+};
+
+router.post('/scan/', async (req, res) => {
   try {
     const { uid, device = 'RFID-Reader', timestamp } = req.body;
     const io = req.app.get('io');
@@ -28,7 +55,8 @@ router.post('/scan', async (req, res) => {
     console.log('RFID Scan Received:', { 
       uid, 
       device, 
-      timestamp: new Date().toISOString() 
+      timestamp: new Date().toISOString(),
+      serverTime: new Date().toString()
     });
 
     if (!uid) {
@@ -36,81 +64,91 @@ router.post('/scan', async (req, res) => {
       return res.status(200).json({
         success: false,
         message: 'No UID provided',
-        displayMessage: 'NO CARD DETECTED'
+        displayMessage: 'NO_CARD_DETECTED'
       });
     }
 
-    // Normalize the incoming UID for matching
     const normalizedUid = normalizeUid(uid);
     const displayUid = formatUidForDisplay(uid);
     
     console.log('Normalized UID:', normalizedUid);
     console.log('Display UID:', displayUid);
-    console.log('Searching for employee with this UID...');
 
-    // Find employee with this UID - searching by normalized UID
-    let employee = await Employee.findOne({ 
-      rfidUid: normalizedUid,
+    let employee = await Employee.findOne({
+      $or: [
+        { rfidUid: { $regex: new RegExp('^' + normalizedUid + '$', 'i') } },
+        { rfidUid: { $regex: new RegExp(normalizedUid, 'i') } }
+      ],
       status: 'Active'
-    }).select('employeeId firstName lastName rfidUid department position');
+    });
+
+    if (!employee) {
+      const allEmployees = await Employee.find({ status: 'Active' }).select('employeeId firstName lastName rfidUid department position');
+      
+      for (const emp of allEmployees) {
+        if (emp.rfidUid) {
+          const empNormalizedUid = normalizeUid(emp.rfidUid);
+          if (empNormalizedUid === normalizedUid) {
+            employee = emp;
+            break;
+          }
+        }
+      }
+    }
 
     if (!employee) {
       console.log('No employee found for UID:', normalizedUid);
-      
-      // Debug: Show all assigned UIDs
-      const allEmployeesWithRFID = await Employee.find({ 
-        status: 'Active',
-        rfidUid: { $exists: true, $ne: null }
-      }).select('employeeId firstName lastName rfidUid');
-
-      console.log('Available UIDs in database:');
-      allEmployeesWithRFID.forEach(emp => {
-        console.log(`  - ${emp.rfidUid} (${emp.firstName} ${emp.lastName})`);
-      });
-      
       return res.status(200).json({
         success: false,
         message: 'RFID card not assigned to any active employee',
-        displayMessage: 'CARD NOT ASSIGNED',
-        scannedUid: normalizedUid,
-        availableUids: allEmployeesWithRFID.map(emp => ({
-          employeeId: emp.employeeId,
-          name: `${emp.firstName} ${emp.lastName}`,
-          rfidUid: emp.rfidUid
-        }))
+        displayMessage: 'CARD_NOT_ASSIGNED',
+        scannedUid: normalizedUid
       });
     }
 
     console.log('Employee found:', {
       name: `${employee.firstName} ${employee.lastName}`,
       employeeId: employee.employeeId,
-      department: employee.department,
-      storedRfidUid: employee.rfidUid
+      department: employee.department
     });
 
-    const today = new Date().toISOString().split('T')[0];
-    const now = new Date();
+    const now = getCurrentDateTime();
+    const today = getCurrentDate();
+    
+    console.log('Current time (GMT+8):', now.toString());
+    console.log('Today date:', today);
 
-    // Find today's attendance record
+    const workHoursCheck = checkWorkingHours(now);
+    
+    if (!workHoursCheck.allowed) {
+      console.log('Outside working hours:', workHoursCheck.message);
+      return res.status(200).json({
+        success: false,
+        message: workHoursCheck.message === 'WORK_NOT_START' ? 'Work has not started yet' : 'Working time is done',
+        displayMessage: workHoursCheck.message
+      });
+    }
+
     let attendance = await Attendance.findOne({
       employeeId: employee.employeeId,
       date: today
     });
 
+    console.log('Existing attendance record:', attendance);
+
     let responseData;
 
     if (!attendance) {
-      // First scan of the day - Time In
-      const workStartTime = new Date();
-      workStartTime.setHours(8, 0, 0, 0); // Work starts at 8:00 AM
+      const workStartTime = new Date(now);
+      workStartTime.setHours(8, 0, 0, 0);
       
       let status = 'Present';
       let lateMinutes = 0;
 
-      // Check if late
       if (now > workStartTime) {
         status = 'Late';
         lateMinutes = Math.round((now - workStartTime) / (1000 * 60));
+        console.log('Employee is late by:', lateMinutes, 'minutes');
       }
 
       attendance = new Attendance({
@@ -125,6 +163,9 @@ router.post('/scan', async (req, res) => {
       });
 
       await attendance.save();
+      console.log('New attendance record created for time in');
+
+      await Attendance.setRfidAssignmentDate(employee.employeeId);
 
       responseData = {
         success: true,
@@ -143,35 +184,36 @@ router.post('/scan', async (req, res) => {
       console.log('Time In recorded for:', employee.employeeId, 'Status:', status);
 
     } else if (attendance.timeIn && !attendance.timeOut) {
-      // Time Out - Check if at least 10 seconds have passed since time in
       const timeIn = new Date(attendance.timeIn);
-      const timeDifference = (now - timeIn) / 1000; // in seconds
+      const timeDifference = (now - timeIn) / 1000;
       
-      if (timeDifference < 10) {
+      console.log('Time difference since time in:', timeDifference, 'seconds');
+      
+      if (timeDifference < 600) {
+        console.log('Too soon for time out - need to wait 10 minutes');
         return res.status(200).json({
           success: false,
-          message: 'Please wait at least 10 seconds between time in and time out',
-          displayMessage: 'WAIT 10 SECONDS'
+          message: 'Please wait at least 10 minutes between time in and time out',
+          displayMessage: 'WAIT_10_MINUTES'
         });
       }
 
       attendance.timeOut = now;
       attendance.status = 'Completed';
       
-      // Calculate hours worked
-      const hoursWorked = (now - timeIn) / (1000 * 60 * 60);
-      attendance.hoursWorked = parseFloat(hoursWorked.toFixed(2));
+      const hoursWorked = attendance.calculateHoursWorked();
       
-      // Calculate overtime (work ends at 5:00 PM)
       const workEndTime = new Date(timeIn);
-      workEndTime.setHours(17, 0, 0, 0); // 5:00 PM
+      workEndTime.setHours(17, 0, 0, 0);
       
       if (now > workEndTime) {
         const overtimeMinutes = (now - workEndTime) / (1000 * 60);
         attendance.overtimeMinutes = Math.round(overtimeMinutes);
+        console.log('Overtime detected:', attendance.overtimeMinutes, 'minutes');
       }
       
       await attendance.save();
+      console.log('Time out recorded, hours worked:', attendance.hoursWorked);
 
       responseData = {
         success: true,
@@ -190,7 +232,7 @@ router.post('/scan', async (req, res) => {
       console.log('Time Out recorded for:', employee.employeeId, 'Hours:', attendance.hoursWorked);
 
     } else {
-      // Already completed for today
+      console.log('Attendance already completed for today');
       responseData = {
         success: true,
         message: 'Attendance already completed for today',
@@ -200,11 +242,8 @@ router.post('/scan', async (req, res) => {
         employeeId: employee.employeeId,
         lastAction: attendance.timeOut ? 'Time Out' : 'Time In'
       };
-
-      console.log('Attendance already completed for:', employee.employeeId);
     }
 
-    // Emit real-time update to all connected clients
     if (io) {
       io.emit('attendance-update', {
         employeeId: employee.employeeId,
@@ -213,11 +252,10 @@ router.post('/scan', async (req, res) => {
         type: responseData.type,
         time: now,
         status: attendance.status,
-        hoursWorked: attendance?.hoursWorked || 0,
+        hoursWorked: attendance?.hoursWorked || '0h 0m',
         timestamp: now
       });
-
-      console.log('Real-time update emitted for:', employee.employeeId);
+      console.log('Socket event emitted for attendance update');
     }
 
     console.log('=== RFID SCAN END - SUCCESS ===');
@@ -235,8 +273,7 @@ router.post('/scan', async (req, res) => {
   }
 });
 
-// Assign RFID to Employee
-router.post('/assign', async (req, res) => {
+router.post('/assign/', async (req, res) => {
   try {
     const { employeeId, rfidUid } = req.body;
     const io = req.app.get('io');
@@ -248,21 +285,16 @@ router.post('/assign', async (req, res) => {
       });
     }
 
-    // Normalize the RFID UID for storage (consistent format)
     const normalizedUid = normalizeUid(rfidUid);
     const formattedUid = formatUidForDisplay(rfidUid);
 
     console.log('=== RFID ASSIGNMENT START ===');
-    console.log('RFID Assignment Request:', { 
-      employeeId, 
-      originalUid: rfidUid,
-      normalizedUid: normalizedUid,
-      formattedUid: formattedUid 
-    });
 
-    // Check if RFID is already assigned to another employee
     const existingAssignment = await Employee.findOne({
-      rfidUid: normalizedUid,
+      $or: [
+        { rfidUid: { $regex: new RegExp('^' + normalizedUid + '$', 'i') } },
+        { rfidUid: formattedUid }
+      ],
       employeeId: { $ne: employeeId }
     });
 
@@ -275,27 +307,24 @@ router.post('/assign', async (req, res) => {
       });
     }
 
-    // Update employee with RFID - store in NORMALIZED format for consistent matching
     const employee = await Employee.findOneAndUpdate(
       { employeeId: employeeId },
       { 
-        rfidUid: normalizedUid, // Store normalized (no spaces) for matching
+        rfidUid: formattedUid,
         isRfidAssigned: true
       },
       { new: true, runValidators: true }
     );
 
     if (!employee) {
-      console.log('Employee not found:', employeeId);
       return res.status(200).json({
         success: false,
         message: 'Employee not found'
       });
     }
 
-    // Save to UID collection (for reference/display)
     const uidRecord = new UID({
-      uid: formattedUid, // Store formatted for display
+      uid: formattedUid,
       normalizedUid: normalizedUid,
       employeeId: employee.employeeId,
       employeeName: `${employee.firstName} ${employee.lastName}`,
@@ -306,7 +335,6 @@ router.post('/assign', async (req, res) => {
 
     await uidRecord.save();
 
-    // Emit real-time update
     if (io) {
       io.emit('rfid-assigned', {
         employeeId: employee.employeeId,
@@ -318,9 +346,6 @@ router.post('/assign', async (req, res) => {
     }
 
     console.log('RFID assigned successfully to:', employee.employeeId);
-    console.log('Stored UID (normalized):', normalizedUid);
-    console.log('Display UID (formatted):', formattedUid);
-    console.log('=== RFID ASSIGNMENT END ===');
 
     res.status(200).json({
       success: true,
@@ -328,7 +353,7 @@ router.post('/assign', async (req, res) => {
       data: {
         employeeId: employee.employeeId,
         name: `${employee.firstName} ${employee.lastName}`,
-        rfidUid: formattedUid,
+        rfidUid: employee.rfidUid,
         normalizedUid: normalizedUid,
         department: employee.department
       }
@@ -345,14 +370,12 @@ router.post('/assign', async (req, res) => {
   }
 });
 
-// Remove RFID Assignment
 router.delete('/assign/:employeeId', async (req, res) => {
   try {
     const { employeeId } = req.params;
     const io = req.app.get('io');
 
     console.log('=== RFID REMOVAL START ===');
-    console.log('Removing RFID from employee:', employeeId);
 
     const employee = await Employee.findOne({ employeeId: employeeId });
     
@@ -363,32 +386,27 @@ router.delete('/assign/:employeeId', async (req, res) => {
       });
     }
 
-    const removedRfid = employee.rfidUid;
-
-    // Update employee
-    await Employee.findOneAndUpdate(
+    const updatedEmployee = await Employee.findOneAndUpdate(
       { employeeId: employeeId },
       { 
         rfidUid: null,
         isRfidAssigned: false
-      }
+      },
+      { new: true }
     );
 
-    // Remove from UID collection
     await UID.findOneAndDelete({ employeeId: employeeId });
 
-    // Emit real-time update
     if (io) {
       io.emit('rfid-removed', {
         employeeId: employee.employeeId,
         employeeName: `${employee.firstName} ${employee.lastName}`,
-        removedRfid: removedRfid,
+        removedRfid: employee.rfidUid,
         removedAt: new Date()
       });
     }
 
     console.log('RFID removed from:', employee.employeeId);
-    console.log('=== RFID REMOVAL END ===');
 
     res.status(200).json({
       success: true,
@@ -396,7 +414,7 @@ router.delete('/assign/:employeeId', async (req, res) => {
       data: {
         employeeId: employee.employeeId,
         name: `${employee.firstName} ${employee.lastName}`,
-        removedRfid: removedRfid
+        removedRfid: employee.rfidUid
       }
     });
 
@@ -411,8 +429,126 @@ router.delete('/assign/:employeeId', async (req, res) => {
   }
 });
 
-// Debug endpoint to check RFID assignments
-router.get('/debug/rfid-assignments', async (req, res) => {
+router.get('/summary/monthly/', async (req, res) => {
+  try {
+    const { employeeId, year, month } = req.query;
+    
+    if (!employeeId || !year || !month) {
+      return res.status(200).json({
+        success: false,
+        message: 'Employee ID, year, and month are required'
+      });
+    }
+
+    const employee = await Employee.findOne({ employeeId: employeeId });
+    if (!employee) {
+      return res.status(200).json({
+        success: false,
+        message: 'Employee not found'
+      });
+    }
+
+    const summary = await Attendance.getMonthlySummaryFromAssignment(
+      employeeId, 
+      parseInt(year), 
+      parseInt(month)
+    );
+
+    const attendanceRate = summary.totalWorkDays > 0 ? 
+      ((summary.presentDays / summary.totalWorkDays) * 100) : 0;
+    
+    const efficiency = summary.presentDays > 0 ? 
+      ((summary.totalHours / (summary.presentDays * 8)) * 100) : 0;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        ...summary,
+        metrics: {
+          attendanceRate: Math.round(attendanceRate * 10) / 10,
+          efficiency: Math.round(efficiency * 10) / 10,
+          totalScheduledHours: summary.totalWorkDays * 8,
+          hoursUtilization: summary.totalHours > 0 ? 
+            Math.round((summary.totalHours / (summary.totalWorkDays * 8)) * 100) : 0
+        },
+        employee: {
+          name: `${employee.firstName} ${employee.lastName}`,
+          department: employee.department,
+          position: employee.position,
+          employeeId: employee.employeeId,
+          dateEmployed: employee.dateEmployed
+        },
+        period: {
+          month: parseInt(month),
+          year: parseInt(year),
+          monthName: new Date(year, month - 1).toLocaleDateString('en', { month: 'long' }),
+          startDate: summary.startDate,
+          endDate: summary.endDate,
+          assignmentDate: summary.assignmentDate,
+          totalCalendarDays: new Date(year, month, 0).getDate()
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching monthly summary:', error);
+    res.status(200).json({
+      success: false,
+      message: 'Error fetching monthly summary',
+      error: error.message
+    });
+  }
+});
+
+router.get('/assignment-history/:employeeId', async (req, res) => {
+  try {
+    const { employeeId } = req.params;
+    
+    const assignmentDate = await Attendance.getRfidAssignmentDate(employeeId);
+    const employee = await Employee.findOne({ employeeId: employeeId });
+    
+    if (!employee) {
+      return res.status(200).json({
+        success: false,
+        message: 'Employee not found'
+      });
+    }
+
+    const attendanceRecords = await Attendance.find({ employeeId: employeeId })
+      .sort({ date: -1 })
+      .limit(50);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        employee: {
+          name: `${employee.firstName} ${employee.lastName}`,
+          employeeId: employee.employeeId,
+          department: employee.department,
+          rfidUid: employee.rfidUid,
+          isRfidAssigned: employee.isRfidAssigned
+        },
+        assignmentInfo: {
+          assignmentDate: assignmentDate,
+          daysSinceAssignment: assignmentDate ? 
+            Math.floor((new Date() - new Date(assignmentDate)) / (1000 * 60 * 60 * 24)) : 0,
+          totalAttendanceRecords: attendanceRecords.length
+        },
+        recentAttendance: attendanceRecords
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching assignment history:', error);
+    res.status(200).json({
+      success: false,
+      message: 'Error fetching assignment history',
+      error: error.message
+    });
+  }
+});
+
+router.get('/debug/rfid-assignments/', async (req, res) => {
   try {
     const employees = await Employee.find({ status: 'Active' })
       .select('employeeId firstName lastName rfidUid department position status')
@@ -424,7 +560,7 @@ router.get('/debug/rfid-assignments', async (req, res) => {
       department: emp.department,
       position: emp.position,
       rfidUid: emp.rfidUid,
-      rfidUidFormatted: formatUidForDisplay(emp.rfidUid),
+      normalizedUid: normalizeUid(emp.rfidUid),
       hasRfid: !!emp.rfidUid,
       status: emp.status
     }));
@@ -447,14 +583,16 @@ router.get('/debug/rfid-assignments', async (req, res) => {
   }
 });
 
-// Test UID matching endpoint
-router.post('/test-uid-match', async (req, res) => {
+router.post('/test-uid-match/', async (req, res) => {
   try {
     const { uid } = req.body;
     const normalizedUid = normalizeUid(uid);
     
     const employee = await Employee.findOne({
-      rfidUid: normalizedUid,
+      $or: [
+        { rfidUid: { $regex: new RegExp('^' + normalizedUid + '$', 'i') } },
+        { rfidUid: uid }
+      ],
       status: 'Active'
     });
     
@@ -463,13 +601,12 @@ router.post('/test-uid-match', async (req, res) => {
       data: {
         inputUid: uid,
         normalizedUid: normalizedUid,
-        formattedUid: formatUidForDisplay(uid),
         employeeFound: !!employee,
         employee: employee ? {
           name: `${employee.firstName} ${employee.lastName}`,
           employeeId: employee.employeeId,
           storedRfidUid: employee.rfidUid,
-          storedRfidUidFormatted: formatUidForDisplay(employee.rfidUid)
+          normalizedStoredUid: normalizeUid(employee.rfidUid)
         } : null
       }
     });
@@ -483,13 +620,16 @@ router.post('/test-uid-match', async (req, res) => {
   }
 });
 
-// Get Today's Attendance
-router.get('/attendance/today', async (req, res) => {
+router.get('/attendance/today/', async (req, res) => {
   try {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getCurrentDate();
+    
+    console.log('Fetching attendance for today:', today);
     
     const attendance = await Attendance.find({ date: today })
       .sort({ timeIn: -1 });
+
+    console.log('Found', attendance.length, 'attendance records for today');
 
     res.status(200).json({
       success: true,
@@ -506,8 +646,7 @@ router.get('/attendance/today', async (req, res) => {
   }
 });
 
-// Get Attendance by Date Range
-router.get('/attendance', async (req, res) => {
+router.get('/attendance/', async (req, res) => {
   try {
     const { startDate, endDate, employeeId } = req.query;
     
@@ -544,10 +683,11 @@ router.get('/attendance', async (req, res) => {
   }
 });
 
-// Get Today's Summary
-router.get('/summary/today', async (req, res) => {
+router.get('/summary/today/', async (req, res) => {
   try {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getCurrentDate();
+    
+    console.log('Fetching today summary for date:', today);
     
     const totalEmployees = await Employee.countDocuments({ status: 'Active' });
     const todayAttendance = await Attendance.find({ date: today });
@@ -556,6 +696,8 @@ router.get('/summary/today', async (req, res) => {
     const absent = totalEmployees - present;
     const completed = todayAttendance.filter(a => a.timeOut).length;
     const late = todayAttendance.filter(a => a.status === 'Late').length;
+
+    console.log('Today summary - Present:', present, 'Absent:', absent, 'Completed:', completed, 'Late:', late);
 
     res.status(200).json({
       success: true,
@@ -580,88 +722,21 @@ router.get('/summary/today', async (req, res) => {
   }
 });
 
-// Get Monthly Summary
-router.get('/summary/monthly', async (req, res) => {
-  try {
-    const { employeeId, year, month } = req.query;
-    
-    if (!employeeId || !year || !month) {
-      return res.status(200).json({
-        success: false,
-        message: 'Employee ID, year, and month are required'
-      });
-    }
-
-    const startDate = `${year}-${month.toString().padStart(2, '0')}-01`;
-    const endDate = new Date(year, month, 0).toISOString().split('T')[0];
-    
-    const employee = await Employee.findOne({ employeeId: employeeId });
-    if (!employee) {
-      return res.status(200).json({
-        success: false,
-        message: 'Employee not found'
-      });
-    }
-
-    const attendance = await Attendance.find({
-      employeeId: employeeId,
-      date: {
-        $gte: startDate,
-        $lte: endDate
-      }
-    });
-
-    const presentDays = attendance.filter(a => a.timeIn).length;
-    const totalHours = attendance.reduce((sum, a) => sum + (a.hoursWorked || 0), 0);
-    const lateDays = attendance.filter(a => a.status === 'Late').length;
-    const totalWorkDays = new Date(year, month, 0).getDate();
-
-    res.status(200).json({
-      success: true,
-      data: {
-        presentDays,
-        absentDays: totalWorkDays - presentDays,
-        totalHours: Math.round(totalHours * 10) / 10,
-        lateDays,
-        totalWorkDays,
-        averageHours: presentDays > 0 ? Math.round((totalHours / presentDays) * 10) / 10 : 0,
-        employee: {
-          name: `${employee.firstName} ${employee.lastName}`,
-          department: employee.department,
-          position: employee.position
-        },
-        period: {
-          month: parseInt(month),
-          year: parseInt(year),
-          monthName: new Date(year, month - 1).toLocaleDateString('en', { month: 'long' })
-        }
-      }
-    });
-
-  } catch (error) {
-    console.error('Error fetching monthly summary:', error);
-    res.status(200).json({
-      success: false,
-      message: 'Error fetching monthly summary'
-    });
-  }
-});
-
-// RFID Status Check
-router.get('/status', (req, res) => {
+router.get('/status/', (req, res) => {
   res.status(200).json({
     success: true,
     data: {
       isConnected: true,
       status: 'RFID System Active',
       timestamp: new Date().toISOString(),
-      version: '2.1'
+      serverTime: new Date().toString(),
+      phTime: getCurrentDateTime().toString(),
+      version: '2.0'
     }
   });
 });
 
-// Get All Assigned RFID Cards
-router.get('/assigned', async (req, res) => {
+router.get('/assigned/', async (req, res) => {
   try {
     const assignedCards = await UID.find().sort({ assignedAt: -1 });
     res.status(200).json({
@@ -678,8 +753,7 @@ router.get('/assigned', async (req, res) => {
   }
 });
 
-// Test RFID Connection
-router.get('/test', async (req, res) => {
+router.get('/test/', async (req, res) => {
   try {
     const employeeCount = await Employee.countDocuments();
     const attendanceCount = await Attendance.countDocuments();
@@ -694,7 +768,8 @@ router.get('/test', async (req, res) => {
           attendance: attendanceCount,
           rfidAssignments: uidCount
         },
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        serverTime: new Date().toString()
       }
     });
   } catch (error) {

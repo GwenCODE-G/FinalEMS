@@ -1,21 +1,60 @@
 const mongoose = require('mongoose');
 
 const addressSchema = new mongoose.Schema({
-  blkLt: String,
-  street: String,
-  area: String,
-  barangay: String,
-  city: String,
-  province: String,
-  postalCode: String,
-  country: String
+  blkLt: {
+    type: String,
+    trim: true
+  },
+  street: {
+    type: String,
+    trim: true
+  },
+  area: {
+    type: String,
+    trim: true
+  },
+  barangay: {
+    type: String,
+    trim: true
+  },
+  city: {
+    type: String,
+    trim: true,
+    required: true
+  },
+  province: {
+    type: String,
+    trim: true,
+    required: true
+  },
+  postalCode: {
+    type: String,
+    trim: true
+  },
+  country: {
+    type: String,
+    default: 'Philippines',
+    trim: true
+  }
 });
 
 const emergencyContactSchema = new mongoose.Schema({
-  name: String,
-  relationship: String,
-  mobile: String,
-  landline: String
+  name: {
+    type: String,
+    trim: true
+  },
+  relationship: {
+    type: String,
+    trim: true
+  },
+  mobile: {
+    type: String,
+    trim: true
+  },
+  landline: {
+    type: String,
+    trim: true
+  }
 });
 
 const workScheduleSchema = new mongoose.Schema({
@@ -60,7 +99,9 @@ const employeeSchema = new mongoose.Schema({
   employeeId: {
     type: String,
     required: true,
-    unique: true
+    unique: true,
+    trim: true,
+    uppercase: true
   },
   firstName: {
     type: String,
@@ -81,6 +122,11 @@ const employeeSchema = new mongoose.Schema({
     enum: ['Male', 'Female'],
     required: true
   },
+  civilStatus: {
+    type: String,
+    enum: ['Single', 'Married', 'Divorced', 'Widowed', 'Separated', ''],
+    default: ''
+  },
   birthday: {
     type: Date,
     required: true
@@ -88,7 +134,7 @@ const employeeSchema = new mongoose.Schema({
   age: {
     type: Number,
     required: true,
-    min: 18
+    min: 0
   },
   email: {
     type: String,
@@ -146,7 +192,6 @@ const employeeSchema = new mongoose.Schema({
       Sunday: { active: false, start: '', end: '' }
     })
   },
-  profilePicture: String,
   status: {
     type: String,
     enum: ['Active', 'Archived'],
@@ -174,7 +219,30 @@ const employeeSchema = new mongoose.Schema({
 
 // Index for better performance
 employeeSchema.index({ employeeId: 1 });
+employeeSchema.index({ email: 1 });
 employeeSchema.index({ rfidUid: 1 });
 employeeSchema.index({ status: 1 });
+employeeSchema.index({ department: 1 });
+employeeSchema.index({ createdAt: -1 });
+
+// Virtual for full name
+employeeSchema.virtual('fullName').get(function() {
+  return `${this.firstName} ${this.middleName ? this.middleName + ' ' : ''}${this.lastName}`.trim();
+});
+
+// Method to check if employee is active
+employeeSchema.methods.isActive = function() {
+  return this.status === 'Active';
+};
+
+// Static method to find by RFID
+employeeSchema.statics.findByRFID = function(rfidUid) {
+  return this.findOne({ rfidUid: rfidUid.toUpperCase(), status: 'Active' });
+};
+
+// Static method to find by employee ID
+employeeSchema.statics.findByEmployeeId = function(employeeId) {
+  return this.findOne({ employeeId: employeeId.toUpperCase() });
+};
 
 module.exports = mongoose.model('Employee', employeeSchema);

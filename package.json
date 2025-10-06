@@ -1,26 +1,75 @@
 {
   "name": "backend",
   "version": "1.0.0",
-  "description": "Backend for Brighton School EMS",
+  "description": "Backend for Brighton School EMS - RFID Attendance System",
   "license": "ISC",
-  "author": "",
+  "author": "Brighton EMS Team",
   "type": "commonjs",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
     "seed:departments": "node scripts/seedDepartments.js",
+    "seed:test-cards": "node scripts/seedTestCards.js",
     "test:connection": "node scripts/testConnection.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test:rfid": "node scripts/testRFIDEndpoint.js",
+    "vercel-build": "echo 'No build step required for Node.js'",
+    "lint": "eslint .",
+    "clean": "rm -rf node_modules package-lock.json && npm install",
+    "test": "jest --verbose"
   },
-  "keywords": [],
+  "keywords": [
+    "rfid",
+    "attendance",
+    "school",
+    "ems",
+    "mongoose",
+    "express",
+    "brighton"
+  ],
   "dependencies": {
+    "axios": "^1.12.2",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
-    "mongoose": "^8.19.0"
+    "mongoose": "^8.19.0",
+    "socket.io": "^4.8.1",
+    "helmet": "^8.0.0",
+    "express-rate-limit": "^7.4.0",
+    "compression": "^1.7.4",
+    "morgan": "^1.10.0",
+    "validator": "^13.12.0",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "moment-timezone": "^0.5.46",
+    "winston": "^3.15.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.10"
+    "nodemon": "^3.1.10",
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-prettier": "^5.2.1",
+    "prettier": "^3.2.5"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
+  "browser": {
+    "fs": false,
+    "path": false,
+    "os": false,
+    "crypto": false,
+    "stream": false,
+    "http": false,
+    "https": false,
+    "zlib": false,
+    "querystring": false,
+    "url": false,
+    "buffer": false,
+    "util": false,
+    "net": false
   }
 }

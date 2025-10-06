@@ -8,49 +8,61 @@ require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
+
+const allowedOrigins = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(',') 
+  : ['http://localhost:3000', 'https://www.brightonsjdm.com'];
+
+const corsOptions = {
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1 || origin.includes('vercel.app')) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "User-Agent"],
+  credentials: true,
+  optionsSuccessStatus: 200
+};
+
+app.use(cors(corsOptions));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
 const io = socketIo(server, {
   cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
+    origin: allowedOrigins,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
+    credentials: true
   }
 });
 
-// Middleware
-app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// Static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Make io accessible to routes
 app.set('io', io);
 
-// Database connection
 const connectDB = async () => {
     try {
-        await mongoose.connect(process.env.MONGODB_URI, {
+        await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/BrightonSystem', {
             useNewUrlParser: true,
             useUnifiedTopology: true,
         });
         console.log('MongoDB Connected to BrightonSystem database');
         
-        // Verify collections exist
         const collections = await mongoose.connection.db.listCollections().toArray();
         const collectionNames = collections.map(col => col.name);
         console.log('Available collections:', collectionNames);
         
-        if (!collectionNames.includes('EMS_Employee')) {
-            console.log('EMS_Employee collection not found');
-        }
-        if (!collectionNames.includes('EMS_Attendance')) {
-            console.log('EMS_Attendance collection not found');
-        }
-        if (!collectionNames.includes('EMS_UID')) {
-            console.log(' EMS_UID collection not found');
-        }
-        if (!collectionNames.includes('EMS_Department')) {
-            console.log('EMS_Department collection not found');
+        const requiredCollections = ['EMS_Employee', 'EMS_Attendance', 'EMS_UID', 'EMS_Department'];
+        for (const collection of requiredCollections) {
+            if (!collectionNames.includes(collection)) {
+                console.log(`Creating ${collection} collection...`);
+                await mongoose.connection.db.createCollection(collection);
+            }
         }
         
     } catch (error) {
@@ -61,7 +73,6 @@ const connectDB = async () => {
 
 connectDB();
 
-// Socket.io connection handling
 io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
     
@@ -69,20 +80,27 @@ io.on('connection', (socket) => {
         console.log('Client disconnected:', socket.id);
     });
     
-    // Join room for specific employee updates
     socket.on('join-employee', (employeeId) => {
         socket.join(`employee-${employeeId}`);
         console.log(`Socket ${socket.id} joined employee-${employeeId}`);
     });
     
-    // Leave employee room
     socket.on('leave-employee', (employeeId) => {
         socket.leave(`employee-${employeeId}`);
         console.log(`Socket ${socket.id} left employee-${employeeId}`);
     });
+
+    socket.on('rfid-data', (data) => {
+        console.log('RFID Data received:', data);
+        io.emit('new-rfid-data', data);
+    });
+
+    socket.on('attendance-update', (data) => {
+        console.log('Attendance update:', data);
+        io.emit('attendance-changed', data);
+    });
 });
 
-// Routes
 const departmentRoutes = require('./routes/departments');
 const employeeRoutes = require('./routes/employees');
 const rfidRoutes = require('./routes/rfidRoutes');
@@ -91,17 +109,17 @@ app.use('/api/departments', departmentRoutes);
 app.use('/api/employees', employeeRoutes);
 app.use('/api/rfid', rfidRoutes);
 
-// Test route for frontend connection
 app.get('/api/test', (req, res) => {
     res.json({
         success: true,
         message: 'Backend API is working',
         timestamp: new Date().toISOString(),
-        database: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected'
+        database: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected',
+        version: '1.0.0',
+        environment: process.env.NODE_ENV || 'development'
     });
 });
 
-// Database status route
 app.get('/api/database-status', async (req, res) => {
     try {
         const collections = await mongoose.connection.db.listCollections().toArray();
@@ -136,40 +154,83 @@ app.get('/api/database-status', async (req, res) => {
     }
 });
 
-// Basic route
 app.get('/', (req, res) => {
     res.json({
         success: true,
         message: 'Brighton School EMS API',
         version: '1.0.0',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        environment: process.env.NODE_ENV || 'development',
+        endpoints: {
+            employees: '/api/employees',
+            departments: '/api/departments',
+            rfid: '/api/rfid',
+            test: '/api/test',
+            health: '/health'
+        }
     });
 });
 
-// Health check
 app.get('/health', (req, res) => {
     res.json({
         status: 'OK',
         database: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        environment: process.env.NODE_ENV || 'development'
     });
 });
 
-// 404 handler
 app.use('*', (req, res) => {
     res.status(404).json({
         success: false,
-        message: 'Route not found'
+        message: 'Route not found',
+        path: req.originalUrl
     });
 });
 
-// Error handling
 app.use((err, req, res, next) => {
-    console.error('Error:', err.message);
-    res.status(500).json({
+    console.error('Error Stack:', err.stack);
+    console.error('Error Details:', err);
+    
+    if (err.message === 'Not allowed by CORS') {
+        return res.status(403).json({
+            success: false,
+            message: 'CORS Error: Origin not allowed',
+            allowedOrigins: allowedOrigins
+        });
+    }
+    
+    if (err.name === 'ValidationError') {
+        const errors = Object.values(err.errors).map(error => error.message);
+        return res.status(400).json({
+            success: false,
+            message: 'Validation Error',
+            errors: errors
+        });
+    }
+    
+    if (err.code === 11000) {
+        const field = Object.keys(err.keyValue)[0];
+        return res.status(400).json({
+            success: false,
+            message: `Duplicate field value: ${field}`,
+            error: `This ${field} already exists`
+        });
+    }
+    
+    if (err.name === 'CastError') {
+        return res.status(400).json({
+            success: false,
+            message: 'Invalid ID format',
+            error: 'Please provide a valid ID'
+        });
+    }
+    
+    res.status(err.status || 500).json({
         success: false,
-        message: 'Server error',
-        error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+        message: err.message || 'Internal Server Error',
+        ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
     });
 });
 
@@ -177,5 +238,8 @@ const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
     console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`MongoDB: ${process.env.MONGODB_URI ? 'Configured' : 'Not configured'}`);
+    console.log(`MongoDB: ${mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected'}`);
+    console.log(`Local API URL: http://localhost:${PORT}`);
+    console.log(`Backend URL: ${process.env.BACKEND_URL || `http://localhost:${PORT}`}`);
+    console.log(`Allowed Origins: ${allowedOrigins.join(', ')}`);
 });

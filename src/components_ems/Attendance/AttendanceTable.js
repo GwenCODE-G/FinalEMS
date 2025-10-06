@@ -1,7 +1,7 @@
 import React from 'react';
 import { 
-  FaEye, FaChartBar, FaClock, FaSignOutAlt, FaIdCard, 
-  FaUserTimes, FaClock as FaClockIcon
+  FaClock, FaSignOutAlt, FaIdCard, 
+  FaUserTimes, FaClock as FaClockIcon, FaHistory
 } from 'react-icons/fa';
 
 const AttendanceTable = ({
@@ -10,7 +10,6 @@ const AttendanceTable = ({
   realTimeUpdates,
   selectedDate,
   onViewHistory,
-  onViewMonthlySummary,
   onManualTimeIn,
   onManualTimeOut,
   onAssignRfid,
@@ -224,17 +223,10 @@ const AttendanceTable = ({
                     <div className="flex space-x-1">
                       <button
                         onClick={() => onViewHistory(employee)}
-                        className="text-blue-600 hover:text-blue-900 p-1 rounded bg-blue-50 text-xs transition-colors"
-                        title="View Attendance History"
+                        className="text-indigo-600 hover:text-indigo-900 p-1 rounded bg-indigo-50 text-xs transition-colors"
+                        title="History of Attendance"
                       >
-                        <FaEye />
-                      </button>
-                      <button
-                        onClick={() => onViewMonthlySummary(employee)}
-                        className="text-purple-600 hover:text-purple-900 p-1 rounded bg-purple-50 text-xs transition-colors"
-                        title="View Monthly Summary"
-                      >
-                        <FaChartBar />
+                        <FaHistory />
                       </button>
                       <button
                         onClick={() => onManualTimeIn(employee)}
@@ -245,7 +237,7 @@ const AttendanceTable = ({
                       </button>
                       <button
                         onClick={() => onManualTimeOut(employee)}
-                        className="text-indigo-600 hover:text-indigo-900 p-1 rounded bg-indigo-50 text-xs transition-colors"
+                        className="text-blue-600 hover:text-blue-900 p-1 rounded bg-blue-50 text-xs transition-colors"
                         title="Manual Time Out"
                       >
                         <FaSignOutAlt />

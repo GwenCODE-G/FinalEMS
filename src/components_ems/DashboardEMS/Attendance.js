@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { 
-  FaSync, FaSearch, FaFilter, FaServer, FaDesktop, FaTimes,
-   FaCheckCircle, FaPlug
+  FaSearch, FaFilter, FaServer, FaTimes,
+   FaCheckCircle, FaPlug, FaCalendarDay
 } from 'react-icons/fa';
 
 import AttendanceTable from '../Attendance/AttendanceTable';
-import AttendanceViewModal from '../Attendance/AttendanceViewModal';
 import SummaryModal from '../Attendance/SummaryModal';
 import ManualAttendanceModal from '../Attendance/ManualAttendanceModal';
 import RfidAssignmentModal from '../Attendance/RfidAssignmentModal';
@@ -66,13 +65,10 @@ function Attendance() {
   const [employees, setEmployees] = useState([]);
   const [filteredEmployees, setFilteredEmployees] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [apiBaseUrl, setApiBaseUrl] = useState('');
-  const [viewMode, setViewMode] = useState('daily');
-  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [monthlySummary, setMonthlySummary] = useState(null);
   const [rfidStatus, setRfidStatus] = useState({ connected: false, status: 'Checking...' });
   const [employeeHistory, setEmployeeHistory] = useState({});
@@ -99,7 +95,6 @@ function Attendance() {
     otherReason: ''
   });
 
-  const [viewModal, setViewModal] = useState({ isOpen: false, employee: null });
   const [manualAttendanceModal, setManualAttendanceModal] = useState({ 
     isOpen: false, 
     employee: null, 
@@ -232,8 +227,12 @@ function Attendance() {
     }
   }, [employees.length]);
 
-  const fetchMonthlySummary = useCallback(async (employeeId, year, month) => {
+  const fetchMonthlySummary = useCallback(async (employeeId) => {
     if (!apiBaseUrl) return;
+    
+    const currentDate = new Date();
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth() + 1;
     
     try {
       const response = await axios.get(
@@ -244,11 +243,11 @@ function Attendance() {
       if (response.data.success) {
         setMonthlySummary(response.data.data);
       } else {
-        alert('Error loading monthly summary');
+        alert('Error loading attendance history');
       }
     } catch (error) {
       console.error('Error fetching monthly summary:', error);
-      alert('Error loading monthly summary');
+      alert('Error loading attendance history');
     }
   }, [apiBaseUrl]);
 
@@ -307,7 +306,6 @@ function Attendance() {
   };
 
   const openHistoryModal = async (employee) => {
-    setViewModal({ isOpen: true, employee });
     if (!apiBaseUrl) return;
     try {
       const startDate = new Date();
@@ -318,17 +316,15 @@ function Attendance() {
         { timeout: 10000 }
       );
       setEmployeeHistory((prev) => ({ ...prev, [employee.employeeId]: response.data.data?.attendance || [] }));
+      
+      // Open summary modal with history
+      fetchMonthlySummary(employee.employeeId);
     } catch (err) {
       console.error('Error fetching employee history:', err);
     }
   };
 
-  const closeViewModal = () => {
-    setViewModal({ isOpen: false, employee: null });
-  };
-
   const closeMonthlySummary = () => {
-    setViewMode('daily');
     setMonthlySummary(null);
   };
 
@@ -441,19 +437,6 @@ function Attendance() {
     }));
   };
 
-  const handleViewMonthlySummary = (employee) => {
-    setViewMode('monthly');
-    fetchMonthlySummary(employee.employeeId, selectedYear, selectedMonth);
-  };
-
-  const handleRefresh = () => {
-    if (apiBaseUrl) {
-      fetchAttendance(apiBaseUrl, selectedDate);
-      fetchTodaySummary(apiBaseUrl);
-      fetchEmployees(apiBaseUrl);
-    }
-  };
-
   const handleSearch = (term) => {
     setSearchTerm(term);
     if (term === '') {
@@ -497,7 +480,7 @@ function Attendance() {
   }, [employees, apiBaseUrl, fetchTodaySummary]);
 
   useEffect(() => {
-    if (!apiBaseUrl || viewMode !== 'daily') return;
+    if (!apiBaseUrl) return;
 
     const intervalId = setInterval(() => {
       fetchAttendance(apiBaseUrl, selectedDate);
@@ -505,7 +488,7 @@ function Attendance() {
     }, 30000);
 
     return () => clearInterval(intervalId);
-  }, [apiBaseUrl, viewMode, selectedDate, fetchAttendance, fetchTodaySummary]);
+  }, [apiBaseUrl, selectedDate, fetchAttendance, fetchTodaySummary]);
 
   const retryConnection = async () => {
     cachedBaseUrl = null;
@@ -608,64 +591,14 @@ function Attendance() {
               {rfidStatus.status}
             </span>
             <span className="flex items-center text-sm text-gray-600">
-              <FaDesktop className="mr-1" /> 
-              Backend: {apiBaseUrl.replace('http://localhost:', 'Port ')}
+              <FaCalendarDay className="mr-1" /> 
+              Today: {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
             </span>
           </div>
         </div>
-        
-        <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-4 w-full lg:w-auto">
-          <select 
-            value={viewMode} 
-            onChange={(e) => setViewMode(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-md text-sm w-full sm:w-auto focus:ring-[#400504] focus:border-[#400504]"
-          >
-            <option value="daily">Daily View</option>
-            <option value="monthly">Monthly View</option>
-          </select>
-          
-          {viewMode === 'daily' ? (
-            <input
-              type="date"
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-md text-sm w-full sm:w-auto focus:ring-[#400504] focus:border-[#400504]"
-            />
-          ) : (
-            <div className="flex space-x-2 w-full sm:w-auto">
-              <select 
-                value={selectedMonth}
-                onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
-                className="px-2 py-2 border border-gray-300 rounded-md text-sm flex-1 focus:ring-[#400504] focus:border-[#400504]"
-              >
-                {Array.from({length: 12}, (_, i) => i + 1).map(month => (
-                  <option key={month} value={month}>
-                    {new Date(2000, month - 1).toLocaleDateString('en', {month: 'short'})}
-                  </option>
-                ))}
-              </select>
-              <select 
-                value={selectedYear}
-                onChange={(e) => setSelectedYear(parseInt(e.target.value))}
-                className="px-2 py-2 border border-gray-300 rounded-md text-sm flex-1 focus:ring-[#400504] focus:border-[#400504]"
-              >
-                {Array.from({length: 5}, (_, i) => new Date().getFullYear() - 2 + i).map(year => (
-                  <option key={year} value={year}>{year}</option>
-                ))}
-              </select>
-            </div>
-          )}
-          
-          <button
-            onClick={handleRefresh}
-            className="flex items-center px-3 py-2 bg-[#400504] text-white rounded-md hover:bg-[#300303] text-sm w-full sm:w-auto justify-center transition-colors"
-          >
-            <FaSync className="mr-1" /> Refresh
-          </button>
-        </div>
       </div>
 
-      {viewMode === 'daily' && todaySummary && todaySummary.summary && (
+      {todaySummary && todaySummary.summary && (
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-4">
           <div className="bg-green-50 p-3 rounded-lg border border-green-200">
             <div className="text-lg font-bold text-green-600">{todaySummary.summary.present || 0}</div>
@@ -712,7 +645,6 @@ function Attendance() {
         realTimeUpdates={realTimeUpdates}
         selectedDate={selectedDate}
         onViewHistory={openHistoryModal}
-        onViewMonthlySummary={handleViewMonthlySummary}
         onManualTimeIn={(employee) => openManualAttendanceModal(employee, 'timein')}
         onManualTimeOut={(employee) => openManualAttendanceModal(employee, 'timeout')}
         onAssignRfid={openRfidAssignmentModal}
@@ -745,20 +677,11 @@ function Attendance() {
         onConfirm={handleManualAttendance}
       />
 
-      <AttendanceViewModal
-        isOpen={viewModal.isOpen}
-        onClose={closeViewModal}
-        employee={viewModal.employee}
-        employeeHistory={employeeHistory}
-        attendance={attendance}
-      />
-
       <SummaryModal
-        isOpen={viewMode === 'monthly' && monthlySummary !== null}
+        isOpen={monthlySummary !== null}
         onClose={closeMonthlySummary}
         monthlySummary={monthlySummary}
-        selectedMonth={selectedMonth}
-        selectedYear={selectedYear}
+        employeeHistory={employeeHistory}
       />
     </div>
   );

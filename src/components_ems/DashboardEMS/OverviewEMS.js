@@ -329,39 +329,6 @@ const OverviewEMS = () => {
         </div>
       </div>
 
-      {/* Quick Actions */}
-      <div className="bg-white rounded-lg shadow-sm border">
-        <div className="px-6 py-4 border-b">
-          <h2 className="text-lg font-semibold text-[#400504]">Quick Actions</h2>
-        </div>
-        <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-          <button 
-            onClick={() => window.location.href = '/employees'}
-            className="p-4 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors text-left border border-blue-200"
-          >
-            <FaUsers className="text-blue-600 text-xl mb-2" />
-            <h3 className="font-semibold text-blue-900">Manage Employees</h3>
-            <p className="text-sm text-blue-700">Add, edit, or archive employees</p>
-          </button>
-          <button 
-            onClick={() => window.location.href = '/attendance'}
-            className="p-4 bg-green-50 rounded-lg hover:bg-green-100 transition-colors text-left border border-green-200"
-          >
-            <FaIdCard className="text-green-600 text-xl mb-2" />
-            <h3 className="font-semibold text-green-900">RFID Management</h3>
-            <p className="text-sm text-green-700">Assign or remove RFID cards</p>
-          </button>
-          <button 
-            onClick={() => window.location.href = '/reports'}
-            className="p-4 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors text-left border border-purple-200"
-          >
-            <FaChartBar className="text-purple-600 text-xl mb-2" />
-            <h3 className="font-semibold text-purple-900">View Reports</h3>
-            <p className="text-sm text-purple-700">Generate attendance reports</p>
-          </button>
-        </div>
-      </div>
-
       {/* Summary Section */}
       <div className="bg-gray-50 rounded-lg p-6">
         <h3 className="text-lg font-semibold text-[#400504] mb-4">Today's Summary</h3>

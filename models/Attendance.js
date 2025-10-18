@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const moment = require('moment-timezone');
 
 const attendanceSchema = new mongoose.Schema({
   employeeId: {
@@ -60,27 +61,110 @@ const attendanceSchema = new mongoose.Schema({
   dateEmployed: {
     type: Date,
     default: null
+  },
+  recordType: {
+    type: String,
+    enum: ['auto', 'manual'],
+    default: 'auto'
+  },
+  recordedBy: {
+    type: String,
+    default: 'System'
+  },
+  timeInSource: {
+    type: String,
+    enum: ['rfid', 'manual'],
+    default: 'rfid'
+  },
+  timeOutSource: {
+    type: String,
+    enum: ['rfid', 'manual'],
+    default: 'rfid'
+  },
+  lastModified: {
+    type: Date,
+    default: Date.now
   }
 }, {
   timestamps: true,
-  collection: 'EMS_Attendance'
+  collection: 'EMS_Attendance',
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
 });
 
+// Indexes for better performance
 attendanceSchema.index({ employeeId: 1, date: 1 });
 attendanceSchema.index({ date: 1, status: 1 });
 attendanceSchema.index({ employeeId: 1, dateEmployed: 1 });
+attendanceSchema.index({ recordType: 1 });
+attendanceSchema.index({ 'timeIn': 1 });
+attendanceSchema.index({ 'timeOut': 1 });
 
+// ==================== HELPER FUNCTIONS ====================
+
+// All times are already in PH timezone, no conversion needed
+function formatTime(date) {
+  if (!date) return '';
+  const hours = date.getHours();
+  const minutes = date.getMinutes().toString().padStart(2, '0');
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  const displayHours = hours % 12 || 12;
+  return `${displayHours}:${minutes} ${ampm}`;
+}
+
+// Format date for display
+function formatDate(date) {
+  if (!date) return '';
+  return moment(date).format('YYYY-MM-DD');
+}
+
+// Get PH date string from date (already in PH time)
+function getPHDateString(date) {
+  return moment(date).format('YYYY-MM-DD');
+}
+
+// Get today's PH date string
+function getTodayPHString() {
+  return moment().tz('Asia/Manila').format('YYYY-MM-DD');
+}
+
+// ==================== VIRTUALS ====================
+
+// Virtual for formatted date
 attendanceSchema.virtual('formattedDate').get(function() {
-  return new Date(this.date).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
-  });
+  return moment(this.date).format('MMMM D, YYYY');
 });
 
+// Virtual for checking if attendance is completed
+attendanceSchema.virtual('isCompleted').get(function() {
+  return !!(this.timeIn && this.timeOut);
+});
+
+// No timezone conversion needed - times are already in PH timezone
+attendanceSchema.virtual('displayTimeIn').get(function() {
+  if (!this.timeIn) return '';
+  return formatTime(this.timeIn);
+});
+
+attendanceSchema.virtual('displayTimeOut').get(function() {
+  if (!this.timeOut) return '';
+  return formatTime(this.timeOut);
+});
+
+attendanceSchema.virtual('displayDate').get(function() {
+  return formatDate(this.date);
+});
+
+// ==================== METHODS ====================
+
+// Calculate hours worked method - Uses PH time (already stored as PH time)
 attendanceSchema.methods.calculateHoursWorked = function() {
   if (this.timeIn && this.timeOut) {
-    const diff = this.timeOut - this.timeIn;
+    // Both times are already in PH timezone
+    const timeIn = moment(this.timeIn);
+    const timeOut = moment(this.timeOut);
+    
+    const diff = timeOut.diff(timeIn);
     const totalMinutes = Math.floor(diff / (1000 * 60));
     const hours = Math.floor(totalMinutes / 60);
     const minutes = totalMinutes % 60;
@@ -93,25 +177,245 @@ attendanceSchema.methods.calculateHoursWorked = function() {
   return { hours: 0, minutes: 0, totalMinutes: 0 };
 };
 
+// Enhanced method to check if time out is allowed (10-minute rule) - Works for both RFID and manual
+attendanceSchema.methods.canTimeOut = function(proposedTimeOut, source = 'manual') {
+  if (!this.timeIn) return { allowed: false, reason: 'No time in recorded' };
+  
+  // Both times are already in PH timezone
+  const timeIn = moment(this.timeIn);
+  const timeOut = moment(proposedTimeOut);
+  
+  const timeDifference = timeOut.diff(timeIn, 'minutes'); // difference in minutes
+  
+  console.log(`Time validation - Time In: ${timeIn.format('HH:mm:ss')}, Proposed Time Out: ${timeOut.format('HH:mm:ss')}, Difference: ${timeDifference} minutes`);
+  
+  if (timeDifference < 10) {
+    const remainingMinutes = Math.ceil(10 - timeDifference);
+    return { 
+      allowed: false, 
+      reason: `Please wait at least 10 minutes between time in and time out. Wait ${remainingMinutes} more minutes.`,
+      remainingMinutes: remainingMinutes
+    };
+  }
+  
+  return { allowed: true, reason: 'Time out allowed' };
+};
+
+// Enhanced method to update time out with validation for both RFID and manual
+attendanceSchema.methods.updateTimeOut = function(timeOut, source = 'manual') {
+  const validation = this.canTimeOut(timeOut, source);
+  if (!validation.allowed) {
+    throw new Error(validation.reason);
+  }
+  
+  this.timeOut = timeOut;
+  this.timeOutSource = source;
+  this.lastModified = new Date();
+  
+  // Recalculate hours worked
+  this.calculateHoursWorked();
+  
+  // Update status
+  if (this.status !== 'Completed') {
+    this.status = 'Completed';
+  }
+  
+  return this;
+};
+
+// ==================== STATIC METHODS ====================
+
 // Helper function to calculate work days between two dates (Monday to Friday)
 attendanceSchema.statics.calculateWorkDays = function(startDate, endDate) {
   let workDays = 0;
-  const currentDate = new Date(startDate);
-  const today = new Date();
+  const currentDate = moment(startDate).startOf('day');
+  const today = moment().tz('Asia/Manila').startOf('day');
   
   // Make sure we don't count future dates
-  const actualEndDate = endDate > today ? today : endDate;
+  const actualEndDate = moment(endDate).startOf('day');
+  const finalEndDate = actualEndDate.isAfter(today) ? today : actualEndDate;
   
-  while (currentDate <= actualEndDate) {
-    const dayOfWeek = currentDate.getDay();
-    // Count only weekdays (Monday to Friday) - don't count future dates
+  while (currentDate.isSameOrBefore(finalEndDate)) {
+    const dayOfWeek = currentDate.day();
+    // Count only weekdays (Monday to Friday)
     if (dayOfWeek >= 1 && dayOfWeek <= 5) {
       workDays++;
     }
-    currentDate.setDate(currentDate.getDate() + 1);
+    currentDate.add(1, 'day');
   }
   
   return workDays;
+};
+
+// Get today's attendance for an employee - Uses PH time
+attendanceSchema.statics.getTodaysAttendance = async function(employeeId) {
+  try {
+    const todayStr = getTodayPHString();
+    
+    return await this.findOne({
+      employeeId: employeeId,
+      date: todayStr
+    });
+  } catch (error) {
+    console.error('Error fetching today attendance:', error);
+    return null;
+  }
+};
+
+// Check if employee has timed in today
+attendanceSchema.statics.hasTimedInToday = async function(employeeId) {
+  const attendance = await this.getTodaysAttendance(employeeId);
+  return !!(attendance && attendance.timeIn);
+};
+
+// Check if employee has timed out today
+attendanceSchema.statics.hasTimedOutToday = async function(employeeId) {
+  const attendance = await this.getTodaysAttendance(employeeId);
+  return !!(attendance && attendance.timeOut);
+};
+
+// Enhanced method to handle mixed RFID and manual attendance with 10-minute validation
+attendanceSchema.statics.processTimeOut = async function(employeeId, timeOut, source = 'manual') {
+  try {
+    const todayStr = getTodayPHString();
+    let attendance = await this.findOne({
+      employeeId: employeeId,
+      date: todayStr
+    });
+
+    if (!attendance || !attendance.timeIn) {
+      throw new Error('No time in record found for today');
+    }
+
+    if (attendance.timeOut) {
+      throw new Error('Time out already recorded for today');
+    }
+
+    console.log(`Processing time out for ${employeeId} - Source: ${source}`);
+    console.log(`Time In: ${attendance.timeIn}, Proposed Time Out: ${timeOut}`);
+
+    // Validate minimum 10 minutes between time in and time out
+    const validation = attendance.canTimeOut(timeOut, source);
+    if (!validation.allowed) {
+      throw new Error(validation.reason);
+    }
+
+    // Update time out
+    attendance.timeOut = timeOut;
+    attendance.timeOutSource = source;
+    attendance.lastModified = new Date();
+
+    // Calculate hours worked
+    attendance.calculateHoursWorked();
+
+    // Check for overtime (after 5:00 PM)
+    const timeOutPH = moment(timeOut);
+    const workEndTime = moment(attendance.timeIn).hour(17).minute(0).second(0);
+    
+    if (timeOutPH.isAfter(workEndTime)) {
+      const overtimeMinutes = timeOutPH.diff(workEndTime, 'minutes');
+      attendance.overtimeMinutes = overtimeMinutes;
+      console.log(`Overtime detected: ${overtimeMinutes} minutes`);
+    }
+    
+    attendance.status = 'Completed';
+
+    const result = await attendance.save();
+    
+    console.log(`Time out processed successfully for ${employeeId}`);
+    console.log(`Hours worked: ${result.hoursWorked}, Overtime: ${result.overtimeMinutes} minutes`);
+    
+    return result;
+
+  } catch (error) {
+    console.error('Error processing time out:', error);
+    throw error;
+  }
+};
+
+// Enhanced method to process RFID scan with mixed mode support
+attendanceSchema.statics.processRfidScan = async function(employeeId, scanTime, action) {
+  try {
+    const todayStr = getTodayPHString();
+    let attendance = await this.findOne({
+      employeeId: employeeId,
+      date: todayStr
+    });
+
+    console.log(`Processing RFID scan for ${employeeId} - Action: ${action}`);
+    console.log(`Scan time: ${scanTime}, Today: ${todayStr}`);
+
+    if (action === 'timein') {
+      // Handle time in
+      if (attendance && attendance.timeIn) {
+        throw new Error('Time in already recorded for today');
+      }
+
+      const workStartTime = new Date(scanTime);
+      workStartTime.setHours(8, 0, 0, 0);
+      
+      let status = 'Present';
+      let lateMinutes = 0;
+
+      if (scanTime > workStartTime) {
+        status = 'Late';
+        lateMinutes = Math.round((scanTime - workStartTime) / (1000 * 60));
+        console.log(`Employee is late by: ${lateMinutes} minutes`);
+      }
+
+      if (!attendance) {
+        const employee = await mongoose.model('Employee').findOne({ employeeId: employeeId });
+        if (!employee) {
+          throw new Error('Employee not found');
+        }
+
+        attendance = new Attendance({
+          employeeId: employee.employeeId,
+          employeeName: `${employee.firstName} ${employee.lastName}`,
+          department: employee.department,
+          position: employee.position,
+          date: todayStr,
+          timeIn: scanTime,
+          status: status,
+          lateMinutes: lateMinutes,
+          dateEmployed: employee.dateEmployed,
+          recordType: 'auto',
+          timeInSource: 'rfid'
+        });
+      } else {
+        attendance.timeIn = scanTime;
+        attendance.status = status;
+        attendance.lateMinutes = lateMinutes;
+        attendance.timeInSource = 'rfid';
+        attendance.recordType = 'auto';
+      }
+
+      const result = await attendance.save();
+      console.log(`RFID Time In recorded successfully for ${employeeId}`);
+      return { type: 'timein', data: result };
+
+    } else if (action === 'timeout') {
+      // Handle time out using the enhanced processTimeOut method
+      if (!attendance || !attendance.timeIn) {
+        throw new Error('No time in record found for today');
+      }
+
+      if (attendance.timeOut) {
+        throw new Error('Time out already recorded for today');
+      }
+
+      const result = await this.processTimeOut(employeeId, scanTime, 'rfid');
+      console.log(`RFID Time Out recorded successfully for ${employeeId}`);
+      return { type: 'timeout', data: result };
+
+    } else {
+      throw new Error('Invalid action. Must be "timein" or "timeout"');
+    }
+
+  } catch (error) {
+    console.error('Error processing RFID scan:', error);
+    throw error;
+  }
 };
 
 // Real-time summary from employment date until present
@@ -134,11 +438,11 @@ attendanceSchema.statics.getRealTimeSummaryFromEmployment = async function(emplo
       };
     }
     
-    const employmentDate = new Date(employee.dateEmployed);
-    const today = new Date();
+    const employmentDate = moment(employee.dateEmployed).startOf('day');
+    const today = moment().tz('Asia/Manila').startOf('day');
     
     // If employment date is in the future, return zeros
-    if (employmentDate > today) {
+    if (employmentDate.isAfter(today)) {
       return {
         presentDays: 0,
         absentDays: 0,
@@ -147,7 +451,7 @@ attendanceSchema.statics.getRealTimeSummaryFromEmployment = async function(emplo
         lateDays: 0,
         totalWorkDays: 0,
         averageHours: 0,
-        employmentDate: employmentDate,
+        employmentDate: employmentDate.toDate(),
         actualWorkDays: 0,
         attendanceRecords: 0,
         lastUpdated: new Date(),
@@ -167,8 +471,8 @@ attendanceSchema.statics.getRealTimeSummaryFromEmployment = async function(emplo
     }
     
     // Convert dates to string format for query
-    const startDateStr = employmentDate.toISOString().split('T')[0];
-    const endDateStr = today.toISOString().split('T')[0];
+    const startDateStr = employmentDate.format('YYYY-MM-DD');
+    const endDateStr = today.format('YYYY-MM-DD');
     
     // Get ALL attendance records from employment date until today
     const attendanceRecords = await this.find({
@@ -180,7 +484,7 @@ attendanceSchema.statics.getRealTimeSummaryFromEmployment = async function(emplo
     });
     
     // Calculate total work days from employment date until today
-    const totalWorkDays = this.calculateWorkDays(employmentDate, today);
+    const totalWorkDays = this.calculateWorkDays(employmentDate.toDate(), today.toDate());
     
     // Calculate present days (days with timeIn)
     const presentDays = attendanceRecords.filter(record => record.timeIn).length;
@@ -197,13 +501,13 @@ attendanceSchema.statics.getRealTimeSummaryFromEmployment = async function(emplo
     
     return {
       presentDays,
-      absentDays, // Real-time absent days calculation
+      absentDays,
       totalHours: totalHours,
       totalMinutes: totalMinutes,
       lateDays,
       totalWorkDays,
       averageHours: presentDays > 0 ? Math.round((totalHours / presentDays) * 10) / 10 : 0,
-      employmentDate: employmentDate,
+      employmentDate: employmentDate.toDate(),
       actualWorkDays: totalWorkDays,
       attendanceRecords: attendanceRecords.length,
       lastUpdated: new Date(),
@@ -220,9 +524,9 @@ attendanceSchema.statics.getRealTimeSummaryFromEmployment = async function(emplo
         hoursUtilization: totalWorkDays > 0 ? Math.round((totalHours / (totalWorkDays * 8)) * 100 * 10) / 10 : 0
       },
       period: {
-        startDate: employmentDate,
-        endDate: today,
-        daysSinceEmployment: Math.floor((today - employmentDate) / (1000 * 60 * 60 * 24))
+        startDate: employmentDate.toDate(),
+        endDate: today.toDate(),
+        daysSinceEmployment: today.diff(employmentDate, 'days')
       }
     };
   } catch (error) {
@@ -251,16 +555,16 @@ attendanceSchema.statics.getMonthlySummaryFromEmployment = async function(employ
       };
     }
     
-    const employmentDate = new Date(employee.dateEmployed);
-    const startOfMonth = new Date(year, month - 1, 1);
-    const endOfMonth = new Date(year, month, 0);
-    const today = new Date();
+    const employmentDate = moment(employee.dateEmployed).startOf('day');
+    const startOfMonth = moment.tz(`${year}-${month}-01`, 'YYYY-M-D', 'Asia/Manila').startOf('day');
+    const endOfMonth = moment.tz(`${year}-${month}-01`, 'YYYY-M-D', 'Asia/Manila').endOf('month').startOf('day');
+    const today = moment().tz('Asia/Manila').startOf('day');
     
     // Use employment date as the start date if it's after month start
-    const queryStartDate = employmentDate > startOfMonth ? employmentDate : startOfMonth;
+    const queryStartDate = employmentDate.isAfter(startOfMonth) ? employmentDate : startOfMonth;
     
     // If employment date is after end of month, return empty results
-    if (queryStartDate > endOfMonth) {
+    if (queryStartDate.isAfter(endOfMonth)) {
       return {
         presentDays: 0,
         absentDays: 0,
@@ -269,7 +573,7 @@ attendanceSchema.statics.getMonthlySummaryFromEmployment = async function(employ
         lateDays: 0,
         totalWorkDays: 0,
         averageHours: 0,
-        employmentDate: employmentDate,
+        employmentDate: employmentDate.toDate(),
         actualWorkDays: 0,
         attendanceRecords: 0,
         lastUpdated: new Date(),
@@ -288,17 +592,17 @@ attendanceSchema.statics.getMonthlySummaryFromEmployment = async function(employ
         period: {
           month: parseInt(month),
           year: parseInt(year),
-          monthName: new Date(year, month - 1).toLocaleDateString('en', { month: 'long' })
+          monthName: startOfMonth.format('MMMM')
         }
       };
     }
     
     // Use today as end date if it's before end of month (REAL-TIME)
-    const queryEndDate = today < endOfMonth ? today : endOfMonth;
+    const queryEndDate = today.isBefore(endOfMonth) ? today : endOfMonth;
     
     // Convert dates to string format for query
-    const startDateStr = queryStartDate.toISOString().split('T')[0];
-    const endDateStr = queryEndDate.toISOString().split('T')[0];
+    const startDateStr = queryStartDate.format('YYYY-MM-DD');
+    const endDateStr = queryEndDate.format('YYYY-MM-DD');
     
     // Get attendance records for the period
     const attendanceRecords = await this.find({
@@ -310,7 +614,7 @@ attendanceSchema.statics.getMonthlySummaryFromEmployment = async function(employ
     });
     
     // Calculate total work days from query start date to today (REAL-TIME)
-    const totalWorkDays = this.calculateWorkDays(queryStartDate, queryEndDate);
+    const totalWorkDays = this.calculateWorkDays(queryStartDate.toDate(), queryEndDate.toDate());
     
     // Calculate present days (days with timeIn)
     const presentDays = attendanceRecords.filter(record => record.timeIn).length;
@@ -327,16 +631,16 @@ attendanceSchema.statics.getMonthlySummaryFromEmployment = async function(employ
     
     return {
       presentDays,
-      absentDays, // Real-time absent days
+      absentDays,
       totalHours: totalHours,
       totalMinutes: totalMinutes,
       lateDays,
       totalWorkDays,
       averageHours: presentDays > 0 ? Math.round((totalHours / presentDays) * 10) / 10 : 0,
-      employmentDate: employmentDate,
+      employmentDate: employmentDate.toDate(),
       actualWorkDays: totalWorkDays,
       attendanceRecords: attendanceRecords.length,
-      lastUpdated: new Date(), // Timestamp for real-time tracking
+      lastUpdated: new Date(),
       employee: {
         name: `${employee.firstName} ${employee.lastName}`,
         department: employee.department,
@@ -352,7 +656,7 @@ attendanceSchema.statics.getMonthlySummaryFromEmployment = async function(employ
       period: {
         month: parseInt(month),
         year: parseInt(year),
-        monthName: new Date(year, month - 1).toLocaleDateString('en', { month: 'long' })
+        monthName: startOfMonth.format('MMMM')
       }
     };
   } catch (error) {
@@ -370,14 +674,14 @@ attendanceSchema.statics.getWorkDaysSinceEmployment = async function(employeeId)
       return 0;
     }
     
-    const employmentDate = new Date(employee.dateEmployed);
-    const today = new Date();
+    const employmentDate = moment(employee.dateEmployed).startOf('day');
+    const today = moment().tz('Asia/Manila').startOf('day');
     
-    if (employmentDate > today) {
+    if (employmentDate.isAfter(today)) {
       return 0;
     }
     
-    return this.calculateWorkDays(employmentDate, today);
+    return this.calculateWorkDays(employmentDate.toDate(), today.toDate());
   } catch (error) {
     console.error('Error calculating work days:', error);
     return 0;
@@ -403,16 +707,16 @@ attendanceSchema.statics.getAttendanceHistory = async function(employeeId) {
       return [];
     }
     
-    const employmentDate = new Date(employee.dateEmployed);
-    const today = new Date();
+    const employmentDate = moment(employee.dateEmployed).startOf('day');
+    const today = moment().tz('Asia/Manila').startOf('day');
     
     // If employment date is in the future, return empty array
-    if (employmentDate > today) {
+    if (employmentDate.isAfter(today)) {
       return [];
     }
     
-    const startDateStr = employmentDate.toISOString().split('T')[0];
-    const endDateStr = today.toISOString().split('T')[0];
+    const startDateStr = employmentDate.format('YYYY-MM-DD');
+    const endDateStr = today.format('YYYY-MM-DD');
     
     const attendance = await this.find({
       employeeId: employeeId,
@@ -429,7 +733,57 @@ attendanceSchema.statics.getAttendanceHistory = async function(employeeId) {
   }
 };
 
+// Get attendance statistics for dashboard - Uses PH time
+attendanceSchema.statics.getDashboardStats = async function() {
+  try {
+    const todayStr = getTodayPHString();
+    
+    const totalEmployees = await mongoose.model('Employee').countDocuments({ status: 'Active' });
+    const todayAttendance = await this.find({ date: todayStr });
+    
+    const present = todayAttendance.filter(a => a.timeIn).length;
+    const absent = totalEmployees - present;
+    const completed = todayAttendance.filter(a => a.timeOut).length;
+    const late = todayAttendance.filter(a => a.status === 'Late').length;
+    const onTime = present - late;
+
+    return {
+      summary: {
+        present,
+        absent,
+        completed,
+        late,
+        onTime,
+        totalEmployees
+      },
+      records: todayAttendance,
+      date: todayStr,
+      phTime: moment().tz('Asia/Manila').format('YYYY-MM-DD hh:mm:ss A')
+    };
+  } catch (error) {
+    console.error('Error fetching dashboard stats:', error);
+    return {
+      summary: {
+        present: 0,
+        absent: 0,
+        completed: 0,
+        late: 0,
+        onTime: 0,
+        totalEmployees: 0
+      },
+      records: [],
+      date: getTodayPHString(),
+      phTime: moment().tz('Asia/Manila').format('YYYY-MM-DD hh:mm:ss A')
+    };
+  }
+};
+
+// ==================== MIDDLEWARE ====================
+
+// Pre-save middleware to update lastModified and calculate hours
 attendanceSchema.pre('save', function(next) {
+  this.lastModified = new Date();
+  
   if (this.timeIn && this.timeOut) {
     this.calculateHoursWorked();
     
@@ -441,4 +795,4 @@ attendanceSchema.pre('save', function(next) {
   next();
 });
 
-module.exports = mongoose.model('Attendance', attendanceModel);
+module.exports = mongoose.model('Attendance', attendanceSchema);

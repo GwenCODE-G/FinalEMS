@@ -1,16 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
-  EyeIcon, 
-  PencilIcon, 
   ArchiveBoxIcon, 
   PlusIcon,
   BuildingOfficeIcon,
   UserGroupIcon,
-  ArrowPathIcon
+  ArrowPathIcon,
+  EyeIcon,
+  PencilSquareIcon
 } from '@heroicons/react/24/outline';
 import ArchiveEmployeeModal from '../ActionEmp/ArchiveEmployeeModal';
-import EmployeeEditModal from '../ActionEmp/EmployeeEditModal';
-import EmployeeViewModal from '../ActionEmp/EmployeeViewModal';
+import ViewEmployeeModal from '../ActionEmp/ViewEmployeeModal';
+import EditEmployeeModal from '../ActionEmp/EditEmployeeModal';
 
 const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
   const [employees, setEmployees] = useState([]);
@@ -23,31 +23,38 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('active');
   
-  // Modal states
   const [archiveModalOpen, setArchiveModalOpen] = useState(false);
-  const [editModalOpen, setEditModalOpen] = useState(false);
   const [viewModalOpen, setViewModalOpen] = useState(false);
+  const [editModalOpen, setEditModalOpen] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState(null);
 
   const fetchEmployees = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      const response = await fetch(`${apiBaseUrl}/api/employees`);
+      console.log('🔄 Fetching employees...');
+      
+      // Fetch ALL employees without status filter
+      const response = await fetch(`${apiBaseUrl}/api/employees?status=all`);
       
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       
       const result = await response.json();
+      console.log('✅ Employees fetched:', {
+        total: result.data?.length,
+        active: result.data?.filter(e => e.status === 'Active').length,
+        archived: result.data?.filter(e => e.status === 'Archived').length
+      });
       
       if (result.success) {
-        setEmployees(result.data);
+        setEmployees(result.data || []);
       } else {
         throw new Error(result.message || 'Failed to fetch employees');
       }
     } catch (error) {
-      console.error('Error fetching employees:', error);
+      console.error('❌ Error fetching employees:', error);
       setError(error.message);
     } finally {
       setLoading(false);
@@ -59,6 +66,12 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
   }, [fetchEmployees, refreshTrigger]);
 
   useEffect(() => {
+    console.log('🔄 Filtering employees:', {
+      total: employees.length,
+      activeTab: activeTab,
+      searchTerm: searchTerm
+    });
+
     const filtered = employees.filter(employee => {
       const matchesSearch = 
         (employee.employeeId && employee.employeeId.toLowerCase().includes(searchTerm.toLowerCase())) ||
@@ -74,6 +87,12 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
 
       return matchesSearch && matchesStatus;
     });
+
+    console.log('✅ Filtered employees:', {
+      filteredCount: filtered.length,
+      activeTab: activeTab
+    });
+
     setFilteredEmployees(filtered);
   }, [searchTerm, employees, activeTab]);
 
@@ -86,7 +105,67 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
     }, 5000);
   };
 
-  // Action Handlers
+  // Corrected requirements status check
+  const getRequirementsStatus = (requirements) => {
+    if (!requirements) return 'Missing';
+    
+    // List of all requirement groups
+    const requirementGroups = [
+      'tinRequirements',
+      'sssRequirements', 
+      'philhealthRequirements',
+      'pagibigRequirements',
+      'healthCardRequirements',
+      'professionalIDRequirements',
+      'driversLicenseRequirements',
+      'barangayWorkingPermitRequirements',
+      'birthCertificateRequirements',
+      'policeNbiRequirements',
+      'barangayClearanceRequirements',
+      'cedulaRequirements'
+    ];
+
+    let completedGroups = 0;
+    let hasNotYetSubmitted = false;
+
+    requirementGroups.forEach(groupName => {
+      const group = requirements[groupName];
+      
+      if (group && typeof group === 'object') {
+        if (group.notYetSubmitted === true) {
+          hasNotYetSubmitted = true;
+        } else {
+          // Check if any other option is selected
+          const hasSelection = Object.entries(group).some(([key, value]) => 
+            key !== 'notYetSubmitted' && value === true
+          );
+          if (hasSelection) {
+            completedGroups++;
+          }
+        }
+      }
+    });
+
+    if (hasNotYetSubmitted) {
+      return 'Missing';
+    }
+
+    // Return "Completed" only if ALL groups have selections
+    return completedGroups === requirementGroups.length ? 'Completed' : 'Missing';
+  };
+
+  const getRequirementsBadge = (requirements) => {
+    const status = getRequirementsStatus(requirements);
+    return status === 'Completed' 
+      ? 'bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full'
+      : 'bg-red-100 text-red-800 text-xs px-2 py-1 rounded-full';
+  };
+
+  const handleArchiveEmployee = (employee) => {
+    setSelectedEmployee(employee);
+    setArchiveModalOpen(true);
+  };
+
   const handleViewEmployee = (employee) => {
     setSelectedEmployee(employee);
     setViewModalOpen(true);
@@ -97,12 +176,8 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
     setEditModalOpen(true);
   };
 
-  const handleArchiveEmployee = (employee) => {
-    setSelectedEmployee(employee);
-    setArchiveModalOpen(true);
-  };
-
   const handleEmployeeArchived = () => {
+    console.log('🔄 Refreshing employees after archive...');
     fetchEmployees();
     showSuccessMessage(`Employee ${selectedEmployee.firstName} ${selectedEmployee.lastName} archived successfully!`);
     setArchiveModalOpen(false);
@@ -110,6 +185,7 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
   };
 
   const handleEmployeeRestored = () => {
+    console.log('🔄 Refreshing employees after restore...');
     fetchEmployees();
     showSuccessMessage(`Employee ${selectedEmployee.firstName} ${selectedEmployee.lastName} restored successfully!`);
     setArchiveModalOpen(false);
@@ -151,7 +227,6 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
     return uid.toUpperCase();
   };
 
-  // Calculate statistics
   const activeEmployees = employees.filter(e => e.status === 'Active');
   const archivedEmployees = employees.filter(e => e.status === 'Archived');
   const rfidAssigned = employees.filter(e => e.isRfidAssigned).length;
@@ -184,7 +259,6 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
 
   return (
     <div className="space-y-4 p-4">
-      {/* Success Message */}
       {showSuccess && (
         <div className="fixed top-4 right-4 z-50 animate-fade-in">
           <div className="bg-[#400504] text-white px-6 py-3 rounded-lg shadow-lg border-l-4 border-[#cba235]">
@@ -210,7 +284,6 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
         </div>
       )}
 
-      {/* Header Section */}
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
         <div>
           <h1 className="text-xl lg:text-2xl font-bold text-[#400504]">Employee Management</h1>
@@ -218,7 +291,6 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
         </div>
         
         <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
-          {/* Search Input */}
           <div className="relative flex-1 lg:flex-none lg:w-64">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
               <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -234,7 +306,6 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
             />
           </div>
           
-          {/* Action Buttons */}
           <div className="flex gap-2">
             <button
               onClick={onViewDepartment}
@@ -261,7 +332,6 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
         </div>
       </div>
 
-      {/* Tab Navigation */}
       <div className="border-b border-gray-200">
         <nav className="-mb-px flex space-x-8">
           <button
@@ -289,7 +359,6 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
         </nav>
       </div>
 
-      {/* Statistics Cards - Compact Version */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm">
           <div className="flex items-center">
@@ -344,7 +413,6 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
         </div>
       </div>
 
-      {/* Compact Employees Table */}
       <div className="bg-white rounded-lg shadow-sm border overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200 text-sm">
@@ -366,6 +434,9 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
                   RFID
                 </th>
                 <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider">
+                  Requirements
+                </th>
+                <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider">
                   Status
                 </th>
                 <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider">
@@ -377,7 +448,6 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
               {filteredEmployees.length > 0 ? (
                 filteredEmployees.map((employee) => (
                   <tr key={employee._id} className="hover:bg-gray-50 transition-colors">
-                    {/* Employee Profile Column */}
                     <td className="px-3 py-2 whitespace-nowrap">
                       <div className="flex items-center">
                         <div className="flex-shrink-0 h-8 w-8">
@@ -399,12 +469,10 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
                       </div>
                     </td>
 
-                    {/* Department Column */}
                     <td className="px-3 py-2 whitespace-nowrap">
                       <div className="text-sm text-gray-900">{employee.department}</div>
                     </td>
 
-                    {/* Position Column */}
                     <td className="px-3 py-2 whitespace-nowrap">
                       <div className="text-sm text-gray-900">{employee.position}</div>
                       {employee.teachingLevel && employee.teachingLevel.length > 0 && (
@@ -415,43 +483,45 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
                       )}
                     </td>
 
-                    {/* Work Type Column */}
                     <td className="px-3 py-2 whitespace-nowrap">
                       <span className={getWorkTypeBadge(employee.workType)}>
                         {employee.workType}
                       </span>
                     </td>
 
-                    {/* RFID Column */}
                     <td className="px-3 py-2 whitespace-nowrap">
                       <span className={getRfidBadge(employee.rfidUid, employee.isRfidAssigned)}>
                         {employee.rfidUid ? formatRfidUid(employee.rfidUid) : 'Not Assigned'}
                       </span>
                     </td>
 
-                    {/* Status Column */}
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <span className={getRequirementsBadge(employee.requirements)}>
+                        {getRequirementsStatus(employee.requirements)}
+                      </span>
+                    </td>
+
                     <td className="px-3 py-2 whitespace-nowrap">
                       <span className={getStatusBadge(employee.status)}>
                         {employee.status}
                       </span>
                     </td>
 
-                    {/* Actions Column */}
                     <td className="px-3 py-2 whitespace-nowrap">
                       <div className="flex items-center space-x-1">
                         <button 
                           onClick={() => handleViewEmployee(employee)}
-                          className="text-blue-600 hover:text-blue-900 p-1 rounded transition-colors"
-                          title="View Details"
+                          className="p-1 text-blue-600 hover:text-blue-800 transition-colors"
+                          title="View Employee"
                         >
                           <EyeIcon className="h-4 w-4" />
                         </button>
                         <button 
                           onClick={() => handleEditEmployee(employee)}
-                          className="text-[#cba235] hover:text-[#dbb545] p-1 rounded transition-colors"
+                          className="p-1 text-green-600 hover:text-green-800 transition-colors"
                           title="Edit Employee"
                         >
-                          <PencilIcon className="h-4 w-4" />
+                          <PencilSquareIcon className="h-4 w-4" />
                         </button>
                         <button 
                           onClick={() => handleArchiveEmployee(employee)}
@@ -470,7 +540,7 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
                 ))
               ) : (
                 <tr>
-                  <td colSpan="7" className="px-6 py-8 text-center">
+                  <td colSpan="8" className="px-6 py-8 text-center">
                     <div className="flex flex-col items-center justify-center">
                       <svg className="h-12 w-12 text-gray-400 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -503,7 +573,6 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
           </table>
         </div>
 
-        {/* Table Footer */}
         {filteredEmployees.length > 0 && (
           <div className="px-4 py-2 bg-gray-50 border-t border-gray-200">
             <div className="flex justify-between items-center text-xs text-gray-600">
@@ -516,7 +585,6 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
         )}
       </div>
 
-      {/* Modals */}
       <ArchiveEmployeeModal
         isOpen={archiveModalOpen}
         onClose={() => setArchiveModalOpen(false)}
@@ -526,18 +594,18 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
         apiBaseUrl={apiBaseUrl}
       />
 
-      <EmployeeEditModal
+      <ViewEmployeeModal
+        isOpen={viewModalOpen}
+        onClose={() => setViewModalOpen(false)}
+        employee={selectedEmployee}
+      />
+
+      <EditEmployeeModal
         isOpen={editModalOpen}
         onClose={() => setEditModalOpen(false)}
         employee={selectedEmployee}
         onEmployeeUpdated={handleEmployeeUpdated}
         apiBaseUrl={apiBaseUrl}
-      />
-
-      <EmployeeViewModal
-        isOpen={viewModalOpen}
-        onClose={() => setViewModalOpen(false)}
-        employee={selectedEmployee}
       />
     </div>
   );

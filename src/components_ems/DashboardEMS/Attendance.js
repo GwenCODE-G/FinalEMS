@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { 
-  FaSearch, FaFilter, FaServer, FaTimes,
-   FaCheckCircle, FaPlug, FaCalendarDay
+  FaSearch, FaServer, FaTimes,
+  FaCheckCircle, FaPlug, FaCalendarDay,
+  FaCalendarAlt,
+  FaExclamationTriangle
 } from 'react-icons/fa';
 
 import AttendanceTable from '../Attendance/AttendanceTable';
@@ -65,13 +67,18 @@ function Attendance() {
   const [employees, setEmployees] = useState([]);
   const [filteredEmployees, setFilteredEmployees] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [apiBaseUrl, setApiBaseUrl] = useState('');
   const [monthlySummary, setMonthlySummary] = useState(null);
   const [rfidStatus, setRfidStatus] = useState({ connected: false, status: 'Checking...' });
-  const [employeeHistory, setEmployeeHistory] = useState({});
   const [todaySummary, setTodaySummary] = useState({
     summary: {
       present: 0,
@@ -84,6 +91,11 @@ function Attendance() {
   });
   const [successMessage, setSuccessMessage] = useState('');
   const [showSuccess, setShowSuccess] = useState(false);
+
+  const [showSummaryModal, setShowSummaryModal] = useState(false);
+  const [departmentFilter, setDepartmentFilter] = useState('all');
+  const [positionFilter, setPositionFilter] = useState('all');
+  const [sortConfig, setSortConfig] = useState({ key: 'recentActivity', direction: 'desc' });
 
   const [rfidAssignment, setRfidAssignment] = useState({
     isOpen: false,
@@ -103,6 +115,36 @@ function Attendance() {
   });
 
   const realTimeUpdates = useRealTimeUpdates(apiBaseUrl);
+
+  const getMinDate = () => {
+    const octoberFirst = new Date('2024-10-01');
+    return octoberFirst.toISOString().split('T')[0];
+  };
+
+  const getMaxDate = () => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const isToday = (date) => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    const todayStr = `${year}-${month}-${day}`;
+    return date === todayStr;
+  };
+
+  const getTodayString = () => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
 
   const showSuccessMessage = (message) => {
     setSuccessMessage(message);
@@ -144,14 +186,18 @@ function Attendance() {
     try {
       console.log('Fetching employees from:', `${baseUrl}/api/employees`);
       const response = await axios.get(`${baseUrl}/api/employees`, {
-        timeout: 10000
+        timeout: 10000,
+        params: {
+          status: 'Active',
+          limit: 1000
+        }
       });
       console.log('Employees response:', response.data);
       
       if (response.data && response.data.success && Array.isArray(response.data.data)) {
         const activeEmployees = response.data.data.filter(emp => emp.status === 'Active');
+        console.log(`Loaded ${activeEmployees.length} active employees`);
         setEmployees(activeEmployees);
-        setFilteredEmployees(activeEmployees);
         setError(null);
       } else {
         console.error('Invalid employees response format:', response.data);
@@ -170,14 +216,25 @@ function Attendance() {
     
     try {
       console.log('Fetching attendance for date:', date);
+      
       const response = await axios.get(
-        `${baseUrl}/api/rfid/attendance?startDate=${date}&endDate=${date}`,
+        `${baseUrl}/api/attendance?date=${date}`,
         { timeout: 10000 }
       );
-      console.log('Attendance records loaded:', response.data.data?.attendance?.length || 0);
-      setAttendance(response.data.data?.attendance || []);
+      
+      console.log('Attendance API Response:', response.data);
+      console.log('Attendance records loaded:', response.data.data?.length || 0);
+      
+      if (response.data.data && Array.isArray(response.data.data)) {
+        response.data.data.forEach(record => {
+          console.log(`Record: ${record.employeeId} - TimeIn: ${record.timeIn} - TimeOut: ${record.timeOut} - Status: ${record.status}`);
+        });
+      }
+      
+      setAttendance(response.data.data || []);
     } catch (error) {
       console.error('Error fetching attendance:', error);
+      console.error('Error details:', error.response?.data || error.message);
       setAttendance([]);
     }
   }, []);
@@ -186,17 +243,17 @@ function Attendance() {
     if (!baseUrl) return;
     
     try {
-      const response = await axios.get(`${baseUrl}/api/rfid/summary/today`, { timeout: 10000 });
+      const response = await axios.get(`${baseUrl}/api/attendance/summary?date=${getTodayString()}`, { timeout: 10000 });
       console.log('Today summary response:', response.data);
       
       if (response.data && response.data.success) {
         setTodaySummary(response.data.data || {
           summary: {
             present: 0,
-            absent: employees.length,
+            absent: 0,
             completed: 0,
             late: 0,
-            totalEmployees: employees.length
+            totalEmployees: 0
           },
           records: []
         });
@@ -204,10 +261,10 @@ function Attendance() {
         setTodaySummary({
           summary: {
             present: 0,
-            absent: employees.length,
+            absent: 0,
             completed: 0,
             late: 0,
-            totalEmployees: employees.length
+            totalEmployees: 0
           },
           records: []
         });
@@ -217,18 +274,18 @@ function Attendance() {
       setTodaySummary({
         summary: {
           present: 0,
-          absent: employees.length,
+          absent: 0,
           completed: 0,
           late: 0,
-          totalEmployees: employees.length
+          totalEmployees: 0
         },
         records: []
       });
     }
-  }, [employees.length]);
+  }, []);
 
-  const fetchMonthlySummary = useCallback(async (employeeId) => {
-    if (!apiBaseUrl) return;
+  const fetchMonthlySummary = useCallback(async (employee) => {
+    if (!apiBaseUrl || !employee) return;
     
     const currentDate = new Date();
     const year = currentDate.getFullYear();
@@ -236,20 +293,148 @@ function Attendance() {
     
     try {
       const response = await axios.get(
-        `${apiBaseUrl}/api/rfid/summary/monthly?employeeId=${employeeId}&year=${year}&month=${month}`,
+        `${apiBaseUrl}/api/attendance/summary/monthly/${employee.employeeId}?year=${year}&month=${month}`,
         { timeout: 10000 }
       );
       
       if (response.data.success) {
         setMonthlySummary(response.data.data);
+        setShowSummaryModal(true);
       } else {
-        alert('Error loading attendance history');
+        console.error('Error loading monthly summary:', response.data.message);
+        setMonthlySummary({
+          employee: employee,
+          presentDays: 0,
+          absentDays: 0,
+          totalHours: 0,
+          totalMinutes: 0,
+          lateDays: 0,
+          totalWorkDays: 0,
+          averageHours: 0,
+          employmentDate: employee.dateEmployed
+        });
+        setShowSummaryModal(true);
       }
     } catch (error) {
       console.error('Error fetching monthly summary:', error);
-      alert('Error loading attendance history');
+      setMonthlySummary({
+        employee: employee,
+        presentDays: 0,
+        absentDays: 0,
+        totalHours: 0,
+        totalMinutes: 0,
+        lateDays: 0,
+        totalWorkDays: 0,
+        averageHours: 0,
+        employmentDate: employee.dateEmployed
+      });
+      setShowSummaryModal(true);
     }
   }, [apiBaseUrl]);
+
+  const applyFilters = useCallback((empList, attendanceList, search, dept, position, date) => {
+    let filtered = empList;
+
+    const todayStr = getTodayString();
+    
+    if (date < todayStr) {
+      console.log('Historical date detected - filtering to employees with attendance only');
+      const employeesWithAttendance = empList.filter(emp =>
+        attendanceList.some(att => att.employeeId === emp.employeeId)
+      );
+      filtered = employeesWithAttendance;
+      console.log(`Filtered from ${empList.length} to ${employeesWithAttendance.length} employees with attendance`);
+    } else {
+      console.log('Current/future date - showing all employees');
+    }
+
+    if (search) {
+      filtered = filtered.filter(emp =>
+        emp.firstName?.toLowerCase().includes(search.toLowerCase()) ||
+        emp.lastName?.toLowerCase().includes(search.toLowerCase()) ||
+        emp.employeeId?.toLowerCase().includes(search.toLowerCase()) ||
+        emp.department?.toLowerCase().includes(search.toLowerCase()) ||
+        emp.position?.toLowerCase().includes(search.toLowerCase())
+      );
+    }
+
+    if (dept !== 'all') {
+      filtered = filtered.filter(emp => emp.department === dept);
+    }
+
+    if (position !== 'all') {
+      filtered = filtered.filter(emp => emp.position === position);
+    }
+
+    const sorted = sortEmployees(filtered, attendanceList, sortConfig);
+    setFilteredEmployees(sorted);
+  }, [sortConfig]);
+
+  const sortEmployees = (employees, attendanceList, config) => {
+    return [...employees].sort((a, b) => {
+      const aAttendance = attendanceList.find(att => att.employeeId === a.employeeId);
+      const bAttendance = attendanceList.find(att => att.employeeId === b.employeeId);
+
+      if (config.key === 'recentActivity') {
+        if (aAttendance?.timeOut && bAttendance?.timeOut) {
+          return new Date(bAttendance.timeOut) - new Date(aAttendance.timeOut);
+        }
+        if (aAttendance?.timeOut) return -1;
+        if (bAttendance?.timeOut) return 1;
+        if (aAttendance?.timeIn && bAttendance?.timeIn) {
+          return new Date(bAttendance.timeIn) - new Date(aAttendance.timeIn);
+        }
+        if (aAttendance?.timeIn) return -1;
+        if (bAttendance?.timeIn) return 1;
+        return 0;
+      }
+
+      if (config.key === 'name') {
+        const aName = `${a.firstName} ${a.lastName}`.toLowerCase();
+        const bName = `${b.firstName} ${b.lastName}`.toLowerCase();
+        return aName.localeCompare(bName);
+      }
+
+      if (config.key === 'department') {
+        return a.department?.localeCompare(b.department || '');
+      }
+
+      if (config.key === 'position') {
+        return a.position?.localeCompare(b.position || '');
+      }
+
+      if (config.key === 'employeeId') {
+        return a.employeeId?.localeCompare(b.employeeId || '');
+      }
+
+      return 0;
+    });
+  };
+
+  const handleSort = (key) => {
+    setSortConfig(prevConfig => ({
+      key,
+      direction: prevConfig.key === key && prevConfig.direction === 'asc' ? 'desc' : 'asc'
+    }));
+  };
+
+  const handleDateChange = (date) => {
+    console.log('Date changed to:', date);
+    setSelectedDate(date);
+    if (apiBaseUrl) {
+      fetchAttendance(apiBaseUrl, date);
+    }
+  };
+
+  const handleViewHistory = async (employee) => {
+    console.log('View history clicked for:', employee);
+    await fetchMonthlySummary(employee);
+  };
+
+  const handleCloseSummaryModal = () => {
+    setShowSummaryModal(false);
+    setMonthlySummary(null);
+  };
 
   const openRfidAssignmentModal = (employee) => {
     setRfidAssignment({
@@ -303,29 +488,6 @@ function Attendance() {
       action: '',
       time: ''
     });
-  };
-
-  const openHistoryModal = async (employee) => {
-    if (!apiBaseUrl) return;
-    try {
-      const startDate = new Date();
-      startDate.setMonth(startDate.getMonth() - 3);
-      
-      const response = await axios.get(
-        `${apiBaseUrl}/api/rfid/attendance?startDate=${startDate.toISOString().split('T')[0]}&endDate=${new Date().toISOString().split('T')[0]}&employeeId=${employee.employeeId}`,
-        { timeout: 10000 }
-      );
-      setEmployeeHistory((prev) => ({ ...prev, [employee.employeeId]: response.data.data?.attendance || [] }));
-      
-      // Open summary modal with history
-      fetchMonthlySummary(employee.employeeId);
-    } catch (err) {
-      console.error('Error fetching employee history:', err);
-    }
-  };
-
-  const closeMonthlySummary = () => {
-    setMonthlySummary(null);
   };
 
   const handleScanRfid = async (uid) => {
@@ -410,20 +572,20 @@ function Attendance() {
 
     try {
       const timeToUse = time || new Date().toTimeString().substring(0, 5);
-      const dateTime = new Date(`${selectedDate}T${timeToUse}`);
       
-      const scanData = {
-        uid: employee.rfidUid || 'MANUAL_' + employee.employeeId,
-        manual: true,
-        action: action,
-        timestamp: dateTime.toISOString()
+      const manualData = {
+        employeeId: employee.employeeId,
+        date: selectedDate,
+        time: timeToUse,
+        action: action
       };
 
-      await axios.post(`${apiBaseUrl}/api/rfid/scan`, scanData);
+      await axios.post(`${apiBaseUrl}/api/attendance/manual`, manualData);
 
       showSuccessMessage(`${action === 'timein' ? 'Time In' : 'Time Out'} recorded successfully for ${employee.firstName} ${employee.lastName}`);
       closeManualAttendanceModal();
       fetchAttendance(apiBaseUrl, selectedDate);
+      fetchEmployees(apiBaseUrl);
     } catch (error) {
       console.error('Manual attendance error:', error);
       alert(error.response?.data?.message || 'Error recording attendance');
@@ -439,19 +601,21 @@ function Attendance() {
 
   const handleSearch = (term) => {
     setSearchTerm(term);
-    if (term === '') {
-      setFilteredEmployees(employees);
-    } else {
-      const filtered = employees.filter(emp =>
-        emp.firstName?.toLowerCase().includes(term.toLowerCase()) ||
-        emp.lastName?.toLowerCase().includes(term.toLowerCase()) ||
-        emp.employeeId?.toLowerCase().includes(term.toLowerCase()) ||
-        emp.department?.toLowerCase().includes(term.toLowerCase()) ||
-        emp.position?.toLowerCase().includes(term.toLowerCase())
-      );
-      setFilteredEmployees(filtered);
-    }
+    applyFilters(employees, attendance, term, departmentFilter, positionFilter, selectedDate);
   };
+
+  const handleDepartmentFilter = (dept) => {
+    setDepartmentFilter(dept);
+    applyFilters(employees, attendance, searchTerm, dept, positionFilter, selectedDate);
+  };
+
+  const handlePositionFilter = (position) => {
+    setPositionFilter(position);
+    applyFilters(employees, attendance, searchTerm, departmentFilter, position, selectedDate);
+  };
+
+  const departments = [...new Set(employees.map(emp => emp.department).filter(Boolean))].sort();
+  const positions = [...new Set(employees.map(emp => emp.position).filter(Boolean))].sort();
 
   useEffect(() => {
     const loadData = async () => {
@@ -489,6 +653,30 @@ function Attendance() {
 
     return () => clearInterval(intervalId);
   }, [apiBaseUrl, selectedDate, fetchAttendance, fetchTodaySummary]);
+
+  useEffect(() => {
+    if (employees.length > 0) {
+      console.log('Applying filters...', {
+        employees: employees.length,
+        attendance: attendance.length,
+        searchTerm,
+        departmentFilter,
+        positionFilter,
+        selectedDate
+      });
+      applyFilters(employees, attendance, searchTerm, departmentFilter, positionFilter, selectedDate);
+    }
+  }, [employees, attendance, searchTerm, departmentFilter, positionFilter, selectedDate, sortConfig, applyFilters]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const today = new Date().toISOString().split('T')[0];
+      if (today !== getMaxDate()) {
+      }
+    }, 60000);
+
+    return () => clearInterval(interval);
+  }, []);
 
   const retryConnection = async () => {
     cachedBaseUrl = null;
@@ -592,8 +780,39 @@ function Attendance() {
             </span>
             <span className="flex items-center text-sm text-gray-600">
               <FaCalendarDay className="mr-1" /> 
-              Today: {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+              Selected: {new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+              {isToday(selectedDate) && (
+                <span className="ml-2 bg-green-100 text-green-800 px-2 py-1 rounded text-xs">
+                  Today
+                </span>
+              )}
             </span>
+            {selectedDate < getTodayString() && (
+              <span className="flex items-center text-sm text-blue-600">
+                <FaExclamationTriangle className="mr-1" />
+                Historical view: Showing only employees with attendance records
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="bg-white p-3 rounded-lg shadow-sm border">
+          <div className="flex items-center space-x-3">
+            <FaCalendarAlt className="text-[#400504] text-lg" />
+            <label htmlFor="attendance-date" className="text-sm font-medium text-gray-700">
+              Select Date:
+            </label>
+            <input
+              type="date"
+              id="attendance-date"
+              value={selectedDate}
+              min={getMinDate()}
+              max={getMaxDate()}
+              onChange={(e) => handleDateChange(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#400504] text-sm"
+            />
+          </div>
+          <div className="text-xs text-gray-500 mt-1 text-center">
+            October 1, 2024 - Present
           </div>
         </div>
       </div>
@@ -601,12 +820,20 @@ function Attendance() {
       {todaySummary && todaySummary.summary && (
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-4">
           <div className="bg-green-50 p-3 rounded-lg border border-green-200">
-            <div className="text-lg font-bold text-green-600">{todaySummary.summary.present || 0}</div>
-            <div className="text-green-800 text-xs">Present Today</div>
+            <div className="text-lg font-bold text-green-600">
+              {isToday(selectedDate) ? todaySummary.summary.present || 0 : filteredEmployees.length}
+            </div>
+            <div className="text-green-800 text-xs">
+              {isToday(selectedDate) ? 'Present Today' : 'Employees with Records'}
+            </div>
           </div>
           <div className="bg-red-50 p-3 rounded-lg border border-red-200">
-            <div className="text-lg font-bold text-red-600">{todaySummary.summary.absent || 0}</div>
-            <div className="text-red-800 text-xs">Absent Today</div>
+            <div className="text-lg font-bold text-red-600">
+              {isToday(selectedDate) ? todaySummary.summary.absent || 0 : 0}
+            </div>
+            <div className="text-red-800 text-xs">
+              {isToday(selectedDate) ? 'Absent Today' : 'No Absent Data'}
+            </div>
           </div>
           <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
             <div className="text-lg font-bold text-blue-600">{todaySummary.summary.completed || 0}</div>
@@ -617,25 +844,96 @@ function Attendance() {
             <div className="text-yellow-800 text-xs">Late Today</div>
           </div>
           <div className="bg-gray-50 p-3 rounded-lg border border-gray-200">
-            <div className="text-lg font-bold text-gray-600">{todaySummary.summary.totalEmployees || 0}</div>
+            <div className="text-lg font-bold text-gray-600">{employees.length}</div>
             <div className="text-gray-800 text-xs">Total Employees</div>
           </div>
         </div>
       )}
 
-      <div className="mb-4 bg-white p-3 rounded-lg shadow-sm border">
-        <div className="flex items-center">
-          <div className="relative flex-1">
+      <div className="bg-white p-4 rounded-lg shadow-sm border mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="relative">
             <FaSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
             <input
               type="text"
-              placeholder="Search employees by name, ID, department, or position..."
+              placeholder="Search employees..."
               value={searchTerm}
               onChange={(e) => handleSearch(e.target.value)}
               className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#cba235] text-sm"
             />
           </div>
-          <FaFilter className="text-xl text-gray-600 ml-3" />
+
+          <div>
+            <select
+              value={departmentFilter}
+              onChange={(e) => handleDepartmentFilter(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#400504] text-sm"
+            >
+              <option value="all">All Departments</option>
+              {departments.map(dept => (
+                <option key={dept} value={dept}>{dept}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <select
+              value={positionFilter}
+              onChange={(e) => handlePositionFilter(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#400504] text-sm"
+            >
+              <option value="all">All Positions</option>
+              {positions.map(position => (
+                <option key={position} value={position}>{position}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <select
+              value={sortConfig.key}
+              onChange={(e) => handleSort(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#400504] text-sm"
+            >
+              <option value="recentActivity">Sort by: Recent Activity</option>
+              <option value="name">Sort by: Name (A-Z)</option>
+              <option value="department">Sort by: Department</option>
+              <option value="position">Sort by: Position</option>
+              <option value="employeeId">Sort by: Employee ID</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2 mt-3">
+          {searchTerm && (
+            <span className="inline-flex items-center px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">
+              Search: "{searchTerm}"
+              <button onClick={() => handleSearch('')} className="ml-1 text-blue-600 hover:text-blue-800">
+                <FaTimes className="text-xs" />
+              </button>
+            </span>
+          )}
+          {departmentFilter !== 'all' && (
+            <span className="inline-flex items-center px-2 py-1 bg-green-100 text-green-800 text-xs rounded">
+              Department: {departmentFilter}
+              <button onClick={() => handleDepartmentFilter('all')} className="ml-1 text-green-600 hover:text-green-800">
+                <FaTimes className="text-xs" />
+              </button>
+            </span>
+          )}
+          {positionFilter !== 'all' && (
+            <span className="inline-flex items-center px-2 py-1 bg-purple-100 text-purple-800 text-xs rounded">
+              Position: {positionFilter}
+              <button onClick={() => handlePositionFilter('all')} className="ml-1 text-purple-600 hover:text-purple-800">
+                <FaTimes className="text-xs" />
+              </button>
+            </span>
+          )}
+          {!isToday(selectedDate) && (
+            <span className="inline-flex items-center px-2 py-1 bg-orange-100 text-orange-800 text-xs rounded">
+              Historical View: Only employees with attendance
+            </span>
+          )}
         </div>
       </div>
 
@@ -644,11 +942,17 @@ function Attendance() {
         attendance={attendance}
         realTimeUpdates={realTimeUpdates}
         selectedDate={selectedDate}
-        onViewHistory={openHistoryModal}
+        onViewHistory={handleViewHistory}
         onManualTimeIn={(employee) => openManualAttendanceModal(employee, 'timein')}
         onManualTimeOut={(employee) => openManualAttendanceModal(employee, 'timeout')}
         onAssignRfid={openRfidAssignmentModal}
         onRemoveRfid={openRemoveRfidModal}
+      />
+
+      <SummaryModal
+        isOpen={showSummaryModal}
+        onClose={handleCloseSummaryModal}
+        monthlySummary={monthlySummary}
       />
 
       <RfidAssignmentModal
@@ -675,13 +979,6 @@ function Attendance() {
         selectedDate={selectedDate}
         onTimeChange={(time) => setManualAttendanceModal(prev => ({ ...prev, time }))}
         onConfirm={handleManualAttendance}
-      />
-
-      <SummaryModal
-        isOpen={monthlySummary !== null}
-        onClose={closeMonthlySummary}
-        monthlySummary={monthlySummary}
-        employeeHistory={employeeHistory}
       />
     </div>
   );

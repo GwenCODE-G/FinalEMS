@@ -8,7 +8,11 @@ import {
   FaClock,
   FaBuilding,
   FaCalendarAlt,
-  FaSync
+  FaSync,
+  FaSignInAlt,
+  FaSignOutAlt,
+  FaUserPlus,
+  FaIdCard as FaRfid
 } from 'react-icons/fa';
 
 const OverviewEMS = () => {
@@ -24,7 +28,28 @@ const OverviewEMS = () => {
   const [recentActivity, setRecentActivity] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [apiBaseUrl] = useState('http://localhost:5000');
+  const [apiBaseUrl, setApiBaseUrl] = useState('');
+
+  // Function to find working backend URL
+  const findWorkingBackend = async () => {
+    const ports = [5000, 5001, 3001, 3000, 8080];
+    
+    for (let port of ports) {
+      try {
+        const response = await fetch(`http://localhost:${port}/api/test`, {
+          method: 'GET',
+        });
+        if (response.ok) {
+          console.log(`Backend found on port ${port}`);
+          return `http://localhost:${port}`;
+        }
+      } catch (error) {
+        console.log(`Port ${port} not available:`, error.message);
+        continue;
+      }
+    }
+    throw new Error('No backend server found. Please start the backend server.');
+  };
 
   const fetchOverviewData = useCallback(async () => {
     try {
@@ -33,56 +58,88 @@ const OverviewEMS = () => {
       
       console.log('Fetching overview data...');
 
+      // Initialize API base URL if not set
+      let baseUrl = apiBaseUrl;
+      if (!baseUrl) {
+        baseUrl = await findWorkingBackend();
+        setApiBaseUrl(baseUrl);
+      }
+
       // Fetch employees
-      const employeesResponse = await fetch(`${apiBaseUrl}/api/employees`);
+      const employeesResponse = await fetch(`${baseUrl}/api/employees?status=Active&limit=1000`);
       if (!employeesResponse.ok) {
         throw new Error(`Failed to fetch employees: ${employeesResponse.status}`);
       }
       const employeesData = await employeesResponse.json();
+      console.log('Employees API response:', employeesData);
+      
       const employees = employeesData.success ? employeesData.data : [];
       console.log('Employees fetched:', employees.length);
 
       // Fetch today's attendance
-      const today = new Date().toISOString().split('T')[0];
-      const attendanceResponse = await fetch(`${apiBaseUrl}/api/rfid/attendance?startDate=${today}&endDate=${today}`);
-      if (!attendanceResponse.ok) {
-        throw new Error(`Failed to fetch attendance: ${attendanceResponse.status}`);
+      let todayAttendance = [];
+      
+      try {
+        // Try RFID endpoint first
+        const attendanceResponse = await fetch(`${baseUrl}/api/rfid/attendance/today/`);
+        if (attendanceResponse.ok) {
+          const attendanceData = await attendanceResponse.json();
+          todayAttendance = attendanceData.success ? attendanceData.data : [];
+        } else {
+          // Fallback to attendance endpoint
+          const fallbackResponse = await fetch(`${baseUrl}/api/attendance/today`);
+          if (fallbackResponse.ok) {
+            const fallbackData = await fallbackResponse.json();
+            todayAttendance = fallbackData.success ? fallbackData.data : [];
+          }
+        }
+      } catch (attendanceError) {
+        console.log('Attendance fetch failed, using empty array:', attendanceError);
       }
-      const attendanceData = await attendanceResponse.json();
-      const todayAttendance = attendanceData.success ? attendanceData.data.attendance : [];
+      
       console.log('Today attendance fetched:', todayAttendance.length);
 
       // Fetch departments
-      const deptResponse = await fetch(`${apiBaseUrl}/api/departments`);
-      if (!deptResponse.ok) {
-        throw new Error(`Failed to fetch departments: ${deptResponse.status}`);
+      let departments = [];
+      try {
+        const deptResponse = await fetch(`${baseUrl}/api/departments`);
+        if (deptResponse.ok) {
+          const deptData = await deptResponse.json();
+          departments = deptData.success ? deptData.data : [];
+        }
+      } catch (deptError) {
+        console.log('Departments fetch failed:', deptError);
       }
-      const deptData = await deptResponse.json();
-      const departments = deptData.success ? deptData.data : [];
       console.log('Departments fetched:', departments.length);
 
-      // Fetch RFID assigned cards
-      const rfidResponse = await fetch(`${apiBaseUrl}/api/rfid/assigned`);
-      let rfidAssignedCount = 0;
-      if (rfidResponse.ok) {
-        const rfidData = await rfidResponse.json();
-        rfidAssignedCount = rfidData.success ? rfidData.count : 0;
+      // Fetch recent RFID assignments (new employees with RFID)
+      let recentAssignments = [];
+      try {
+        const assignmentsResponse = await fetch(`${baseUrl}/api/rfid/assigned`);
+        if (assignmentsResponse.ok) {
+          const assignmentsData = await assignmentsResponse.json();
+          recentAssignments = assignmentsData.success ? assignmentsData.data : [];
+          // Sort by assignment date, get recent ones
+          recentAssignments = recentAssignments
+            .sort((a, b) => new Date(b.assignedAt) - new Date(a.assignedAt))
+            .slice(0, 10);
+        }
+      } catch (assignmentError) {
+        console.log('RFID assignments fetch failed:', assignmentError);
       }
-      console.log('RFID assigned:', rfidAssignedCount);
+
+      // Calculate RFID assigned from employees data
+      const rfidAssigned = employees.filter(emp => emp.isRfidAssigned || emp.rfidUid).length;
+      console.log('RFID assigned calculated:', rfidAssigned);
 
       // Calculate statistics
-      const activeEmployees = employees.filter(emp => emp.status === 'Active');
-      const totalEmployees = activeEmployees.length;
+      const totalEmployees = employees.length;
       
       const presentToday = todayAttendance.filter(a => a.timeIn).length;
-      const absentToday = totalEmployees - presentToday;
+      const absentToday = Math.max(0, totalEmployees - presentToday);
       const completedShifts = todayAttendance.filter(a => a.timeOut).length;
       const lateToday = todayAttendance.filter(a => a.status === 'Late').length;
       
-      // If RFID assigned count is 0, calculate from employees data
-      const rfidAssigned = rfidAssignedCount > 0 ? rfidAssignedCount : 
-                          activeEmployees.filter(emp => emp.isRfidAssigned || emp.rfidUid).length;
-
       console.log('Calculated stats:', {
         totalEmployees,
         presentToday,
@@ -103,11 +160,75 @@ const OverviewEMS = () => {
         completedShifts
       });
 
-      // Recent activity (last 5 attendance records)
-      const recent = todayAttendance
-        .sort((a, b) => new Date(b.timeIn || b.createdAt) - new Date(a.timeIn || a.createdAt))
-        .slice(0, 5);
-      setRecentActivity(recent);
+      // Create comprehensive recent activity including time in/out and new employees
+      const activityItems = [];
+
+      // 1. Add attendance events (time in/out)
+      todayAttendance.forEach(attendance => {
+        if (attendance.timeIn) {
+          activityItems.push({
+            type: 'time_in',
+            employeeName: attendance.employeeName,
+            employeeId: attendance.employeeId,
+            department: attendance.department,
+            time: attendance.timeIn,
+            status: attendance.status,
+            isLate: attendance.status === 'Late',
+            timestamp: new Date(attendance.timeIn)
+          });
+        }
+
+        if (attendance.timeOut) {
+          activityItems.push({
+            type: 'time_out',
+            employeeName: attendance.employeeName,
+            employeeId: attendance.employeeId,
+            department: attendance.department,
+            time: attendance.timeOut,
+            hoursWorked: attendance.hoursWorked,
+            timestamp: new Date(attendance.timeOut)
+          });
+        }
+      });
+
+      // 2. Add recent RFID assignments (new employees with RFID)
+      recentAssignments.forEach(assignment => {
+        activityItems.push({
+          type: 'rfid_assigned',
+          employeeName: assignment.employeeName,
+          employeeId: assignment.employeeId,
+          department: assignment.department,
+          rfidUid: assignment.uid,
+          timestamp: new Date(assignment.assignedAt || assignment.createdAt)
+        });
+      });
+
+      // 3. Add recently created employees (last 24 hours)
+      const oneDayAgo = new Date();
+      oneDayAgo.setDate(oneDayAgo.getDate() - 1);
+      
+      const newEmployees = employees.filter(emp => 
+        new Date(emp.createdAt) > oneDayAgo
+      ).slice(0, 5);
+
+      newEmployees.forEach(employee => {
+        activityItems.push({
+          type: 'new_employee',
+          employeeName: `${employee.firstName} ${employee.lastName}`,
+          employeeId: employee.employeeId,
+          department: employee.department,
+          position: employee.position,
+          timestamp: new Date(employee.createdAt)
+        });
+      });
+
+      // Sort all activities by timestamp (newest first) and take top 10
+      const recentActivity = activityItems
+        .sort((a, b) => b.timestamp - a.timestamp)
+        .slice(0, 10);
+
+      console.log('Recent activity items:', recentActivity);
+      setRecentActivity(recentActivity);
 
     } catch (error) {
       console.error('Error fetching overview data:', error);
@@ -152,8 +273,103 @@ const OverviewEMS = () => {
     </div>
   );
 
+  const formatTime = (timeString) => {
+    if (!timeString) return '';
+    
+    try {
+      const date = new Date(timeString);
+      // Convert to PH time (GMT+8)
+      const phTime = new Date(date.getTime() + (8 * 60 * 60 * 1000));
+      const hours = phTime.getHours();
+      const minutes = phTime.getMinutes().toString().padStart(2, '0');
+      const ampm = hours >= 12 ? 'PM' : 'AM';
+      const displayHours = hours % 12 || 12;
+      return `${displayHours}:${minutes} ${ampm}`;
+    } catch (error) {
+      console.error('Error formatting time:', error);
+      return 'Invalid time';
+    }
+  };
+
+  const formatRelativeTime = (timestamp) => {
+    const now = new Date();
+    const diffMs = now - new Date(timestamp);
+    const diffMins = Math.floor(diffMs / (1000 * 60));
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    return formatTime(timestamp);
+  };
+
+  const getActivityIcon = (type) => {
+    switch (type) {
+      case 'time_in':
+        return <FaSignInAlt className="text-green-500" />;
+      case 'time_out':
+        return <FaSignOutAlt className="text-blue-500" />;
+      case 'rfid_assigned':
+        return <FaRfid className="text-purple-500" />;
+      case 'new_employee':
+        return <FaUserPlus className="text-indigo-500" />;
+      default:
+        return <FaUserCheck className="text-gray-500" />;
+    }
+  };
+
+  const getActivityColor = (type) => {
+    switch (type) {
+      case 'time_in':
+        return 'bg-green-100 text-green-600';
+      case 'time_out':
+        return 'bg-blue-100 text-blue-600';
+      case 'rfid_assigned':
+        return 'bg-purple-100 text-purple-600';
+      case 'new_employee':
+        return 'bg-indigo-100 text-indigo-600';
+      default:
+        return 'bg-gray-100 text-gray-600';
+    }
+  };
+
+  const getActivityText = (activity) => {
+    switch (activity.type) {
+      case 'time_in':
+        return `Checked ${activity.isLate ? 'in late' : 'in'}`;
+      case 'time_out':
+        return 'Checked out';
+      case 'rfid_assigned':
+        return 'RFID card assigned';
+      case 'new_employee':
+        return 'New employee added';
+      default:
+        return 'Activity';
+    }
+  };
+
+  const getActivityDescription = (activity) => {
+    switch (activity.type) {
+      case 'time_in':
+        return `at ${formatTime(activity.time)} • ${activity.department}`;
+      case 'time_out':
+        return `at ${formatTime(activity.time)} • Worked ${activity.hoursWorked || '0h 0m'}`;
+      case 'rfid_assigned':
+        return `RFID: ${activity.rfidUid} • ${activity.department}`;
+      case 'new_employee':
+        return `${activity.position} • ${activity.department}`;
+      default:
+        return activity.department || '';
+    }
+  };
+
   const handleRefresh = () => {
     fetchOverviewData();
+  };
+
+  const retryConnection = async () => {
+    setApiBaseUrl(''); // Reset base URL to force rediscovery
+    await fetchOverviewData();
   };
 
   if (loading) {
@@ -173,13 +389,16 @@ const OverviewEMS = () => {
             <div>
               <strong className="font-bold">Error Loading Data</strong>
               <p className="block">{error}</p>
+              <p className="text-sm mt-2">
+                Make sure your backend server is running on localhost:5000
+              </p>
             </div>
             <button
-              onClick={handleRefresh}
+              onClick={retryConnection}
               className="flex items-center bg-[#400504] hover:bg-[#300303] text-white font-bold py-2 px-4 rounded"
             >
               <FaSync className="mr-2" />
-              Retry
+              Retry Connection
             </button>
           </div>
         </div>
@@ -193,7 +412,7 @@ const OverviewEMS = () => {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
         <div>
           <h1 className="text-3xl font-bold text-[#400504]">Dashboard Overview</h1>
-          <p className="text-gray-600">Welcome to Brighton Employee Management System</p>
+       
         </div>
         <button
           onClick={handleRefresh}
@@ -279,42 +498,39 @@ const OverviewEMS = () => {
         </div>
         <div className="p-6">
           {recentActivity.length > 0 ? (
-            <div className="space-y-4">
+            <div className="space-y-3">
               {recentActivity.map((activity, index) => (
-                <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
-                  <div className="flex items-center">
-                    <div className={`p-2 rounded-full ${
-                      activity.status === 'Present' ? 'bg-green-100 text-green-600' :
-                      activity.status === 'Late' ? 'bg-yellow-100 text-yellow-600' :
-                      activity.status === 'Completed' ? 'bg-blue-100 text-blue-600' :
-                      'bg-gray-100 text-gray-600'
-                    }`}>
-                      <FaUserCheck className="text-sm" />
+                <div key={index} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors border">
+                  <div className="flex items-center space-x-4">
+                    <div className={`p-3 rounded-full ${getActivityColor(activity.type)}`}>
+                      {getActivityIcon(activity.type)}
                     </div>
-                    <div className="ml-3">
-                      <p className="font-medium text-gray-900">
-                        {activity.employeeName || `Employee ${activity.employeeId}`}
-                      </p>
-                      <p className="text-sm text-gray-500">
-                        {activity.timeIn ? `Checked in at ${new Date(activity.timeIn).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}` : 'Not checked in'}
-                        {activity.timeOut && ` • Out at ${new Date(activity.timeOut).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`}
-                      </p>
+                    <div className="flex-1">
+                      <div className="flex items-center space-x-2">
+                        <p className="font-semibold text-gray-900">
+                          {activity.employeeName}
+                        </p>
+                        <span className="text-xs bg-gray-200 text-gray-700 px-2 py-1 rounded">
+                          {activity.employeeId}
+                        </span>
+                      </div>
+                      <div className="flex items-center space-x-4 mt-1">
+                        <p className="text-sm text-gray-700 font-medium">
+                          {getActivityText(activity)}
+                        </p>
+                        <p className="text-sm text-gray-500">
+                          {getActivityDescription(activity)}
+                        </p>
+                      </div>
                     </div>
                   </div>
-                  <div className="flex items-center space-x-3">
-                    {activity.hoursWorked > 0 && (
-                      <span className="text-sm text-gray-500">
-                        {activity.hoursWorked.toFixed(1)}h
-                      </span>
-                    )}
-                    <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                      activity.status === 'Present' ? 'bg-green-100 text-green-800' :
-                      activity.status === 'Late' ? 'bg-yellow-100 text-yellow-800' :
-                      activity.status === 'Completed' ? 'bg-blue-100 text-blue-800' :
-                      'bg-gray-100 text-gray-800'
-                    }`}>
-                      {activity.status}
-                    </span>
+                  <div className="text-right">
+                    <p className="text-sm font-medium text-gray-900">
+                      {formatRelativeTime(activity.timestamp)}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      {formatTime(activity.timestamp)}
+                    </p>
                   </div>
                 </div>
               ))}
@@ -323,7 +539,7 @@ const OverviewEMS = () => {
             <div className="text-center py-8 text-gray-500">
               <FaCalendarAlt className="mx-auto text-4xl text-gray-300 mb-3" />
               <p>No activity recorded today</p>
-              <p className="text-sm mt-1">Attendance records will appear here as employees check in</p>
+              <p className="text-sm mt-1">Time in/out events and new employees will appear here</p>
             </div>
           )}
         </div>

@@ -6,7 +6,7 @@ const PhoneNumberValidation = ({
   value = '', 
   onChange, 
   required = false,
-  digitsOnly = false
+  placeholder = "Enter phone number"
 }) => {
   const [isValid, setIsValid] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');
@@ -27,144 +27,106 @@ const PhoneNumberValidation = ({
       return true;
     }
     
-    let isValid = true;
-    let errorMsg = '';
-
-    // Check if phone number is empty
-    if (!phone) {
-      isValid = false;
-      errorMsg = 'Phone number is required';
-    } 
-    // Additional validation for Philippine numbers
-    else {
-      // Remove any formatting to check digit count
-      const digitsOnly = phone.replace(/\D/g, '');
-      
-      // Check if it starts with Philippine country code (63)
-      if (!digitsOnly.startsWith('63')) {
-        isValid = false;
-        errorMsg = 'Only Philippine phone numbers are allowed';
-      }
-      // Check minimum length for Philippine numbers (country code + area code + number)
-      else if (digitsOnly.length < 11) {
-        isValid = false;
-        errorMsg = 'Philippine phone number is too short';
-      }
-      // Check maximum length for Philippine numbers
-      else if (digitsOnly.length > 12) {
-        isValid = false;
-        errorMsg = 'Philippine phone number is too long';
-      }
-      // Validate Philippine mobile number format
-      else if (digitsOnly.length >= 11) {
-        const mobilePrefix = digitsOnly.substring(2, 4); // Get the prefix after 63
-        const validMobilePrefixes = ['90', '91', '92', '93', '94', '95', '96', '97', '98', '99', '81', '82', '83'];
-        
-        if (!validMobilePrefixes.includes(mobilePrefix)) {
-          isValid = false;
-          errorMsg = 'Invalid Philippine mobile number format';
-        }
-      }
+    // If required and empty
+    if (required && !phone) {
+      setIsValid(false);
+      setErrorMessage('Phone number is required');
+      return false;
     }
 
-    setIsValid(isValid);
-    setErrorMessage(errorMsg);
+    // Remove any formatting to check digit count
+    const digitsOnly = phone.replace(/\D/g, '');
     
-    return isValid;
+    // Check if it's a Philippine number (starts with 63)
+    if (!digitsOnly.startsWith('63')) {
+      setIsValid(false);
+      setErrorMessage('Only Philippine phone numbers are allowed');
+      return false;
+    }
+    
+    // Check length (63 + 10 digits = 12 total)
+    if (digitsOnly.length !== 12) {
+      setIsValid(false);
+      setErrorMessage('Philippine mobile number must be 12 digits (including +63)');
+      return false;
+    }
+    
+    // Validate Philippine mobile number format
+    const mobilePrefix = digitsOnly.substring(2, 4); // Get the prefix after 63
+    const validMobilePrefixes = [
+      '90', '91', '92', '93', '94', '95', '96', '97', '98', '99', // Globe/TM
+      '81', '82', '83', '84', '85', '86', '87', '88', '89', // Smart/TNT
+      '77', '78', '79' // New prefixes
+    ];
+    
+    if (!validMobilePrefixes.includes(mobilePrefix)) {
+      setIsValid(false);
+      setErrorMessage('Invalid Philippine mobile number format');
+      return false;
+    }
+
+    setIsValid(true);
+    return true;
   };
 
   const handlePhoneChange = (value, country) => {
-    // Force Philippines country code
-    let processedValue = value;
+    setPhoneValue(value);
     
-    // If the user tries to change country, force it back to Philippines
-    if (country.countryCode !== 'ph') {
-      // Extract digits only and ensure it starts with 63
-      const digits = value.replace(/\D/g, '');
-      if (!digits.startsWith('63')) {
-        processedValue = '63' + digits;
-      }
-    }
+    // Validate the phone number
+    const isValid = validatePhoneNumber(value);
     
-    // If digitsOnly is true, remove all formatting and send only digits to parent
-    if (digitsOnly) {
-      processedValue = processedValue.replace(/\D/g, '');
-    }
-    
-    setPhoneValue(processedValue);
-    
-    // Update parent with processed phone number
+    // Call parent onChange with the formatted value and validation status
     if (onChange) {
-      const isValid = validatePhoneNumber(processedValue);
-      onChange(processedValue, isValid, country);
+      onChange(value, isValid, country);
     }
   };
 
   const handleBlur = () => {
-    // Validate on blur
     validatePhoneNumber(phoneValue);
   };
-
-  // For display in the input, we need to format it properly
-  // but we'll store and send only digits if digitsOnly is true
-  const displayValue = digitsOnly && phoneValue 
-    ? formatPhoneNumber(phoneValue) 
-    : phoneValue;
-
-  // Helper function to format phone number for display
-  function formatPhoneNumber(phoneNumber) {
-    // Remove all non-digit characters
-    const cleaned = phoneNumber.replace(/\D/g, '');
-    
-    // Format Philippine numbers: +63 XXX XXX XXXX
-    if (cleaned.startsWith('63')) {
-      const rest = cleaned.substring(2);
-      if (rest.length <= 3) {
-        return `+63 ${rest}`;
-      } else if (rest.length <= 6) {
-        return `+63 ${rest.substring(0, 3)} ${rest.substring(3)}`;
-      } else {
-        return `+63 ${rest.substring(0, 3)} ${rest.substring(3, 6)} ${rest.substring(6, 10)}`;
-      }
-    }
-    
-    return phoneNumber;
-  }
 
   return (
     <div className="w-full">
       <PhoneInput
         country={'ph'}
-        value={displayValue}
+        value={phoneValue}
         onChange={handlePhoneChange}
         onBlur={handleBlur}
-        countryCodeEditable={false} // Disable country code editing
-        enableSearch={false} // Disable country search
-        disableSearchIcon={true} // Hide search icon
-        onlyCountries={['ph']} // Only show Philippines as an option
+        countryCodeEditable={false}
+        enableSearch={false}
+        disableSearchIcon={true}
+        onlyCountries={['ph']}
         inputProps={{
           required: required,
+          placeholder: placeholder,
         }}
         inputStyle={{
           width: '100%',
-          padding: '6px 10px',
-          paddingLeft: '46px',
-          fontSize: '12px',
-          height: '32px',
+          padding: '8px 10px',
+          paddingLeft: '48px',
+          fontSize: '14px',
+          height: '40px',
+          border: '1px solid #d1d5db',
+          borderRadius: '8px',
           transition: 'all 0.2s ease-in-out',
         }}
         buttonStyle={{
-          width: '42px',
-          padding: '0 3px',
-          height: '32px',
+          width: '46px',
+          padding: '0 4px',
+          height: '40px',
+          border: '1px solid #d1d5db',
+          borderRight: 'none',
+          borderTopLeftRadius: '8px',
+          borderBottomLeftRadius: '8px',
+          backgroundColor: '#f9fafb',
           transition: 'all 0.2s ease-in-out',
-          cursor: 'default', // Indicate non-clickable
+          cursor: 'default',
         }}
-        inputClass={`border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#cba235] focus:border-transparent transition-all duration-200 ${
+        inputClass={`focus:outline-none focus:ring-2 focus:ring-[#cba235] focus:border-transparent ${
           !isValid ? 'border-red-500 bg-red-50' : 'hover:border-gray-400'
         }`}
-        buttonClass={`transition-all duration-200 ${!isValid ? 'border-red-500 bg-red-50' : ''}`}
-        dropdownClass="border-gray-300 rounded text-xs"
+        buttonClass={`${!isValid ? 'border-red-500 bg-red-50' : ''}`}
+        dropdownClass="border-gray-300 rounded-lg shadow-lg"
       />
       
       {!isValid && (
@@ -173,11 +135,9 @@ const PhoneNumberValidation = ({
         </div>
       )}
 
-
-
       {/* Help text for Philippine number format */}
-      <div className="text-xs text-gray-400 mt-1">
-        Format: +63 9XX XXX XXXX (Philippine mobile)
+      <div className="text-xs text-gray-500 mt-1">
+        Format: +63 9XX XXX XXXX (Philippine mobile only)
       </div>
     </div>
   );

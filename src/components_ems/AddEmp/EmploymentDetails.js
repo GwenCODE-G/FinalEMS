@@ -191,7 +191,7 @@ const EmploymentDetails = ({
         </div>
       )}
       
-      <div>
+      <div className="max-w-xs">
         <label className="block text-sm font-medium text-gray-700">Type of Work *</label>
         <select
           name="workType"
@@ -242,7 +242,7 @@ const EmploymentDetails = ({
         </div>
       </div>
       
-      <div>
+      <div className="max-w-xs">
         <label className="block text-sm font-medium text-gray-700">Employee ID</label>
         <input
           type="text"

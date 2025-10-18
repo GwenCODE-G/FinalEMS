@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import PhoneNumberValidation from './PhoneNumberValidation';
+import validator from 'validator';
 
 const ContactInfo = ({ formData, errors, handleInputChange }) => {
   const [provinces, setProvinces] = useState([]);
@@ -8,18 +9,30 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
   const [permanentProvinces, setPermanentProvinces] = useState([]);
   const [permanentCities, setPermanentCities] = useState([]);
   const [permanentBarangays, setPermanentBarangays] = useState([]);
-  const [postalCode, setPostalCode] = useState('');
-  const [permanentPostalCode, setPermanentPostalCode] = useState('');
-  const [loading, setLoading] = useState({
-    provinces: false,
-    cities: false,
-    barangays: false,
-    permanentProvinces: false,
-    permanentCities: false,
-    permanentBarangays: false
+  
+  const [phoneValidation, setPhoneValidation] = useState({
+    contactNumber: { isValid: null, loading: false },
+    emergencyMobile: { isValid: null, loading: false }
   });
 
-  // Relationship options (excluding daughter and non-blood related)
+  const [emailValidation, setEmailValidation] = useState({
+    isValid: null,
+    loading: false,
+    details: null
+  });
+
+  const APPROVED_DOMAINS = [
+    'gmail.com',
+    'outlook.com',
+    'yahoo.com',
+    'icloud.com',
+    'aol.com',
+    'protonmail.com',
+    'zoho.com',
+    'gmx.com',
+    'email.com'
+  ];
+
   const relationshipOptions = [
     'Spouse',
     'Parent',
@@ -33,7 +46,6 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
     'Guardian'
   ];
 
-  // Set default emergency contact type to Landline
   useEffect(() => {
     if (!formData.emergencyContact?.type) {
       handleInputChange({
@@ -45,47 +57,398 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
     }
   }, [formData.emergencyContact?.type, handleInputChange]);
 
-  // Fetch provinces from PSGC API for current address
+  const validateEmail = async (email) => {
+    if (!email || email.trim().length < 3) {
+      setEmailValidation({ isValid: null, loading: false, details: null });
+      return;
+    }
+
+    setEmailValidation({ isValid: null, loading: true, details: null });
+
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    try {
+      const isValidFormat = validator.isEmail(email);
+      
+      if (!isValidFormat) {
+        setEmailValidation({
+          isValid: false,
+          loading: false,
+          details: {
+            is_valid_format: { value: false },
+            is_approved_domain: { value: false },
+            reason: 'Invalid email format'
+          }
+        });
+        return;
+      }
+
+      const domain = email.split('@')[1];
+      const isApprovedDomain = APPROVED_DOMAINS.includes(domain) || domain.endsWith('.edu.ph');
+      
+      if (!isApprovedDomain) {
+        setEmailValidation({
+          isValid: false,
+          loading: false,
+          details: {
+            is_valid_format: { value: true },
+            is_approved_domain: { value: false },
+            reason: 'Email domain not accepted. Please use Gmail, Outlook, Yahoo, or other approved providers.'
+          }
+        });
+        return;
+      }
+
+      const isDisposable = await checkDisposableEmail(email);
+      
+      if (isDisposable) {
+        setEmailValidation({
+          isValid: false,
+          loading: false,
+          details: {
+            is_valid_format: { value: true },
+            is_approved_domain: { value: true },
+            is_disposable_email: { value: true },
+            reason: 'Temporary/disposable emails are not accepted'
+          }
+        });
+        return;
+      }
+
+      const emailType = domain.endsWith('.edu.ph') ? 'educational' : 'personal';
+      
+      setEmailValidation({
+        isValid: true,
+        loading: false,
+        details: {
+          is_valid_format: { value: true },
+          is_approved_domain: { value: true },
+          is_disposable_email: { value: false },
+          email_type: emailType,
+          is_edu_ph: domain.endsWith('.edu.ph'),
+          domain: domain
+        }
+      });
+      
+    } catch (error) {
+      console.error('Error validating email:', error);
+      const isValidFormat = validator.isEmail(email);
+      setEmailValidation({
+        isValid: isValidFormat,
+        loading: false,
+        details: {
+          is_valid_format: { value: isValidFormat },
+          is_approved_domain: { value: false },
+          reason: 'Validation error'
+        }
+      });
+    }
+  };
+
+  const checkDisposableEmail = async (email) => {
+    const disposableDomains = [
+      'tempmail.com', 'guerrillamail.com', 'mailinator.com', '10minutemail.com',
+      'yopmail.com', 'throwawaymail.com', 'fakeinbox.com', 'temp-mail.org',
+      'trashmail.com', 'dispostable.com', 'getairmail.com', 'tmpmail.org',
+      'sharklasers.com', 'guerrillamail.net', 'grr.la', 'guerrillamail.info',
+      'maildrop.cc', 'throwawaymail.com', 'fake-mail.com', 'tempinbox.com'
+    ];
+    
+    const domain = email.split('@')[1];
+    return disposableDomains.some(disposable => 
+      domain.includes(disposable) || disposable.includes(domain)
+    );
+  };
+
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (formData.email) {
+        validateEmail(formData.email);
+      } else {
+        setEmailValidation({ isValid: null, loading: false, details: null });
+      }
+    }, 800);
+    
+    return () => clearTimeout(timeoutId);
+  }, [formData.email]);
+
+  const handleContactNumberChange = (phoneNumber, isValid) => {
+    handleInputChange({
+      target: {
+        name: 'contactNumber',
+        value: phoneNumber
+      }
+    });
+    
+    setPhoneValidation(prev => ({
+      ...prev,
+      contactNumber: { ...prev.contactNumber, isValid, loading: false }
+    }));
+  };
+
+  const handleEmergencyMobileChange = (phoneNumber, isValid) => {
+    handleInputChange({
+      target: {
+        name: 'emergencyContact.mobile',
+        value: phoneNumber
+      }
+    });
+    
+    setPhoneValidation(prev => ({
+      ...prev,
+      emergencyMobile: { ...prev.emergencyMobile, isValid, loading: false }
+    }));
+  };
+
+  const getPhoneValidationStatus = (fieldName) => {
+    const validation = phoneValidation[fieldName];
+    if (validation.isValid === true) {
+      return { text: 'Valid Philippine number', color: 'text-green-600', bg: 'bg-green-50' };
+    }
+    if (validation.isValid === false) {
+      return { text: 'Invalid number format', color: 'text-red-600', bg: 'bg-red-50' };
+    }
+    return null;
+  };
+
+  const getEmailValidationStatus = () => {
+    if (emailValidation.loading) {
+      return { 
+        text: 'Validating email...', 
+        color: 'text-blue-600', 
+        bg: 'bg-blue-50'
+      };
+    }
+    if (emailValidation.isValid === true) {
+      return { 
+        text: 'Valid email address', 
+        color: 'text-green-600', 
+        bg: 'bg-green-50'
+      };
+    }
+    if (emailValidation.isValid === false) {
+      const reason = emailValidation.details?.reason || 'Invalid email';
+      return { 
+        text: reason, 
+        color: 'text-red-600', 
+        bg: 'bg-red-50'
+      };
+    }
+    return null;
+  };
+
+  const handleEmailChange = (e) => {
+    const value = e.target.value;
+    handleInputChange(e);
+
+    if (value && !validator.isEmail(value)) {
+      setEmailValidation({
+        isValid: false,
+        loading: false,
+        details: {
+          is_valid_format: { value: false },
+          is_approved_domain: { value: false },
+          reason: 'Invalid email format'
+        }
+      });
+    } else if (!value) {
+      setEmailValidation({ isValid: null, loading: false, details: null });
+    }
+  };
+
+  const handleStreetInput = (e) => {
+    const value = e.target.value;
+    const filteredValue = value.replace(/[^a-zA-Z0-9\s]/g, '');
+    const limitedValue = filteredValue.slice(0, 30);
+    
+    handleInputChange({
+      target: {
+        name: e.target.name,
+        value: limitedValue
+      }
+    });
+  };
+
+  const handleAreaInput = (e) => {
+    const value = e.target.value;
+    const filteredValue = value.replace(/[^a-zA-Z0-9\s]/g, '');
+    const limitedValue = filteredValue.slice(0, 30);
+    
+    handleInputChange({
+      target: {
+        name: e.target.name,
+        value: limitedValue
+      }
+    });
+  };
+
+  const handleBlockInput = (e) => {
+    const value = e.target.value;
+    const filteredValue = value.replace(/[^a-zA-Z0-9]/g, '');
+    const limitedValue = filteredValue.slice(0, 4);
+    
+    handleInputChange({
+      target: {
+        name: e.target.name,
+        value: limitedValue
+      }
+    });
+  };
+
+  const handleLotInput = (e) => {
+    const value = e.target.value;
+    const filteredValue = value.replace(/[^a-zA-Z0-9]/g, '');
+    const limitedValue = filteredValue.slice(0, 4);
+    
+    handleInputChange({
+      target: {
+        name: e.target.name,
+        value: limitedValue
+      }
+    });
+  };
+
+  const handleTextInput = (e) => {
+    const value = e.target.value;
+    const filteredValue = value.replace(/[^a-zA-Z\s]/g, '');
+    const limitedValue = filteredValue.slice(0, 30);
+    
+    handleInputChange({
+      target: {
+        name: e.target.name,
+        value: limitedValue
+      }
+    });
+  };
+
+  const handleNumberInput = (e) => {
+    const value = e.target.value;
+    const filteredValue = value.replace(/\D/g, '');
+    
+    handleInputChange({
+      target: {
+        name: e.target.name,
+        value: filteredValue
+      }
+    });
+  };
+
+  const handleTINInput = (e) => {
+    const value = e.target.value;
+    const filteredValue = value.replace(/\D/g, '').slice(0, 9);
+    
+    handleInputChange({
+      target: {
+        name: e.target.name,
+        value: filteredValue
+      }
+    });
+  };
+
+  const handleSSSInput = (e) => {
+    const value = e.target.value;
+    const filteredValue = value.replace(/\D/g, '').slice(0, 12);
+    
+    handleInputChange({
+      target: {
+        name: e.target.name,
+        value: filteredValue
+      }
+    });
+  };
+
+  const handlePhilhealthInput = (e) => {
+    const value = e.target.value;
+    const filteredValue = value.replace(/\D/g, '').slice(0, 12);
+    
+    handleInputChange({
+      target: {
+        name: e.target.name,
+        value: filteredValue
+      }
+    });
+  };
+
+  const handlePagibigInput = (e) => {
+    const value = e.target.value;
+    const filteredValue = value.replace(/\D/g, '').slice(0, 12);
+    
+    handleInputChange({
+      target: {
+        name: e.target.name,
+        value: filteredValue
+      }
+    });
+  };
+
+  // FIXED: Properly handle checkbox group changes for requirements
+  const handleCheckboxGroup = (groupName, option, isChecked) => {
+    const currentRequirements = formData.requirements || {};
+    const currentGroup = currentRequirements[groupName] || {};
+    
+    const updatedGroup = { ...currentGroup };
+    
+    if (option === 'notYetSubmitted') {
+      if (isChecked) {
+        // If "Not Yet Submitted" is checked, set only this to true and clear others
+        Object.keys(updatedGroup).forEach(key => {
+          updatedGroup[key] = false;
+        });
+        updatedGroup.notYetSubmitted = true;
+      } else {
+        updatedGroup.notYetSubmitted = false;
+      }
+    } else {
+      // If any other option is checked, ensure "notYetSubmitted" is false
+      updatedGroup.notYetSubmitted = false;
+      updatedGroup[option] = isChecked;
+    }
+    
+    // Update the requirements object
+    const updatedRequirements = {
+      ...currentRequirements,
+      [groupName]: updatedGroup
+    };
+    
+    handleInputChange({
+      target: {
+        name: 'requirements',
+        value: updatedRequirements
+      }
+    });
+  };
+
   useEffect(() => {
     const fetchProvinces = async () => {
-      setLoading(prev => ({ ...prev, provinces: true }));
       try {
         const response = await fetch('https://psgc.gitlab.io/api/provinces/');
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
         const data = await response.json();
-        // Sort provinces alphabetically
         const sortedProvinces = data.sort((a, b) => a.name.localeCompare(b.name));
         setProvinces(sortedProvinces);
       } catch (error) {
         console.error('Error fetching provinces:', error);
         setProvinces([]);
-      } finally {
-        setLoading(prev => ({ ...prev, provinces: false }));
       }
     };
     fetchProvinces();
   }, []);
 
-  // Fetch provinces from PSGC API for permanent address
   useEffect(() => {
     const fetchPermanentProvinces = async () => {
-      setLoading(prev => ({ ...prev, permanentProvinces: true }));
       try {
         const response = await fetch('https://psgc.gitlab.io/api/provinces/');
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
         const data = await response.json();
-        // Sort provinces alphabetically
         const sortedProvinces = data.sort((a, b) => a.name.localeCompare(b.name));
         setPermanentProvinces(sortedProvinces);
       } catch (error) {
         console.error('Error fetching permanent provinces:', error);
         setPermanentProvinces([]);
-      } finally {
-        setLoading(prev => ({ ...prev, permanentProvinces: false }));
       }
     };
     
@@ -94,25 +457,20 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
     }
   }, [formData.sameAsCurrent]);
 
-  // Fetch cities when province changes for current address
   useEffect(() => {
     if (formData.currentAddress?.provinceCode) {
       const fetchCities = async () => {
-        setLoading(prev => ({ ...prev, cities: true }));
         try {
           const response = await fetch(`https://psgc.gitlab.io/api/provinces/${formData.currentAddress.provinceCode}/cities-municipalities/`);
           if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
           }
           const data = await response.json();
-          // Sort cities alphabetically
           const sortedCities = data.sort((a, b) => a.name.localeCompare(b.name));
           setCities(sortedCities);
         } catch (error) {
           console.error('Error fetching cities:', error);
           setCities([]);
-        } finally {
-          setLoading(prev => ({ ...prev, cities: false }));
         }
       };
       fetchCities();
@@ -122,25 +480,20 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
     }
   }, [formData.currentAddress?.provinceCode]);
 
-  // Fetch cities when province changes for permanent address
   useEffect(() => {
     if (formData.permanentAddress?.provinceCode && !formData.sameAsCurrent) {
       const fetchPermanentCities = async () => {
-        setLoading(prev => ({ ...prev, permanentCities: true }));
         try {
           const response = await fetch(`https://psgc.gitlab.io/api/provinces/${formData.permanentAddress.provinceCode}/cities-municipalities/`);
           if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
           }
           const data = await response.json();
-          // Sort cities alphabetically
           const sortedCities = data.sort((a, b) => a.name.localeCompare(b.name));
           setPermanentCities(sortedCities);
         } catch (error) {
           console.error('Error fetching permanent cities:', error);
           setPermanentCities([]);
-        } finally {
-          setLoading(prev => ({ ...prev, permanentCities: false }));
         }
       };
       fetchPermanentCities();
@@ -150,100 +503,53 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
     }
   }, [formData.permanentAddress?.provinceCode, formData.sameAsCurrent]);
 
-  // Fetch barangays when city changes for current address
-  const fetchBarangays = useCallback(async (cityCode) => {
-    setLoading(prev => ({ ...prev, barangays: true }));
-    try {
-      const response = await fetch(`https://psgc.gitlab.io/api/cities-municipalities/${cityCode}/barangays/`);
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      const data = await response.json();
-      // Sort barangays alphabetically
-      const sortedBarangays = data.sort((a, b) => a.name.localeCompare(b.name));
-      setBarangays(sortedBarangays);
-      
-      // Try to get postal code from city data - ONLY SUGGEST, DON'T AUTO-FILL
-      const selectedCity = cities.find(city => city.code === cityCode);
-      if (selectedCity && selectedCity.postalCode) {
-        setPostalCode(selectedCity.postalCode);
-        // Don't automatically update the form data - let user decide
-      }
-    } catch (error) {
-      console.error('Error fetching barangays:', error);
-      setBarangays([]);
-    } finally {
-      setLoading(prev => ({ ...prev, barangays: false }));
-    }
-  }, [cities]);
-
-  // Fetch barangays when city changes for permanent address
-  const fetchPermanentBarangays = useCallback(async (cityCode) => {
-    setLoading(prev => ({ ...prev, permanentBarangays: true }));
-    try {
-      const response = await fetch(`https://psgc.gitlab.io/api/cities-municipalities/${cityCode}/barangays/`);
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      const data = await response.json();
-      // Sort barangays alphabetically
-      const sortedBarangays = data.sort((a, b) => a.name.localeCompare(b.name));
-      setPermanentBarangays(sortedBarangays);
-      
-      // Try to get postal code from city data - ONLY SUGGEST, DON'T AUTO-FILL
-      const selectedCity = permanentCities.find(city => city.code === cityCode);
-      if (selectedCity && selectedCity.postalCode) {
-        setPermanentPostalCode(selectedCity.postalCode);
-        // Don't automatically update the form data - let user decide
-      }
-    } catch (error) {
-      console.error('Error fetching permanent barangays:', error);
-      setPermanentBarangays([]);
-    } finally {
-      setLoading(prev => ({ ...prev, permanentBarangays: false }));
-    }
-  }, [permanentCities]);
-
   useEffect(() => {
     if (formData.currentAddress?.cityCode) {
-      fetchBarangays(formData.currentAddress.cityCode);
+      const fetchBarangays = async () => {
+        try {
+          const response = await fetch(`https://psgc.gitlab.io/api/cities-municipalities/${formData.currentAddress.cityCode}/barangays/`);
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+          const data = await response.json();
+          const sortedBarangays = data.sort((a, b) => a.name.localeCompare(b.name));
+          setBarangays(sortedBarangays);
+        } catch (error) {
+          console.error('Error fetching barangays:', error);
+          setBarangays([]);
+        }
+      };
+      fetchBarangays();
     } else {
       setBarangays([]);
-      setPostalCode('');
     }
-  }, [formData.currentAddress?.cityCode, fetchBarangays]);
+  }, [formData.currentAddress?.cityCode]);
 
   useEffect(() => {
     if (formData.permanentAddress?.cityCode && !formData.sameAsCurrent) {
-      fetchPermanentBarangays(formData.permanentAddress.cityCode);
+      const fetchPermanentBarangays = async () => {
+        try {
+          const response = await fetch(`https://psgc.gitlab.io/api/cities-municipalities/${formData.permanentAddress.cityCode}/barangays/`);
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+          const data = await response.json();
+          const sortedBarangays = data.sort((a, b) => a.name.localeCompare(b.name));
+          setPermanentBarangays(sortedBarangays);
+        } catch (error) {
+          console.error('Error fetching permanent barangays:', error);
+          setPermanentBarangays([]);
+        }
+      };
+      fetchPermanentBarangays();
     } else {
       setPermanentBarangays([]);
-      setPermanentPostalCode('');
     }
-  }, [formData.permanentAddress?.cityCode, formData.sameAsCurrent, fetchPermanentBarangays]);
+  }, [formData.permanentAddress?.cityCode, formData.sameAsCurrent]);
 
-  // Auto-capitalize first letter of name fields and street
-  const capitalizeFirstLetter = (string) => {
-    if (!string) return '';
-    return string.charAt(0).toUpperCase() + string.slice(1);
-  };
-
-  // Handle street input with auto-capitalization
-  const handleStreetChange = (addressType, value) => {
-    const capitalizedValue = capitalizeFirstLetter(value);
-    handleInputChange({
-      target: {
-        name: `${addressType}.street`,
-        value: capitalizedValue
-      }
-    });
-  };
-
-  // Handle province change for current address
   const handleProvinceChange = (e) => {
     const selectedProvince = provinces.find(p => p.code === e.target.value);
     
-    // Update province name and code
     handleInputChange({
       target: {
         name: 'currentAddress.province',
@@ -257,7 +563,6 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
       }
     });
     
-    // Reset dependent fields
     handleInputChange({
       target: {
         name: 'currentAddress.city',
@@ -288,14 +593,11 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
         value: ''
       }
     });
-    setPostalCode('');
   };
 
-  // Handle province change for permanent address
   const handlePermanentProvinceChange = (e) => {
     const selectedProvince = permanentProvinces.find(p => p.code === e.target.value);
     
-    // Update province name and code
     handleInputChange({
       target: {
         name: 'permanentAddress.province',
@@ -309,7 +611,6 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
       }
     });
     
-    // Reset dependent fields
     handleInputChange({
       target: {
         name: 'permanentAddress.city',
@@ -340,10 +641,8 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
         value: ''
       }
     });
-    setPermanentPostalCode('');
   };
 
-  // Handle city change for current address
   const handleCityChange = (e) => {
     const selectedCity = cities.find(c => c.code === e.target.value);
     
@@ -360,7 +659,6 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
       }
     });
     
-    // Reset barangay when city changes
     handleInputChange({
       target: {
         name: 'currentAddress.barangay',
@@ -373,15 +671,8 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
         value: ''
       }
     });
-    
-    // Set postal code as suggestion only, don't auto-fill
-    if (selectedCity?.postalCode) {
-      setPostalCode(selectedCity.postalCode);
-      // Don't automatically update the form data
-    }
   };
 
-  // Handle city change for permanent address
   const handlePermanentCityChange = (e) => {
     const selectedCity = permanentCities.find(c => c.code === e.target.value);
     
@@ -398,7 +689,6 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
       }
     });
     
-    // Reset barangay when city changes
     handleInputChange({
       target: {
         name: 'permanentAddress.barangay',
@@ -411,15 +701,8 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
         value: ''
       }
     });
-    
-    // Set postal code as suggestion only, don't auto-fill
-    if (selectedCity?.postalCode) {
-      setPermanentPostalCode(selectedCity.postalCode);
-      // Don't automatically update the form data
-    }
   };
 
-  // Handle barangay change for current address
   const handleBarangayChange = (e) => {
     const selectedBarangay = barangays.find(b => b.code === e.target.value);
     handleInputChange({
@@ -436,7 +719,6 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
     });
   };
 
-  // Handle barangay change for permanent address
   const handlePermanentBarangayChange = (e) => {
     const selectedBarangay = permanentBarangays.find(b => b.code === e.target.value);
     handleInputChange({
@@ -453,29 +735,6 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
     });
   };
 
-  // Handle phone number changes using PhoneNumberValidation component
-  const handlePhoneChange = (fieldName, phoneNumber, isValid) => {
-    handleInputChange({
-      target: {
-        name: fieldName,
-        value: phoneNumber
-      }
-    });
-  };
-
-  // SIMPLE: Government ID handler - no formatting
-  const handleGovernmentIdChange = (e) => {
-    const { name, value } = e.target;
-    
-    handleInputChange({
-      target: {
-        name: name,
-        value: value
-      }
-    });
-  };
-
-  // Combined emergency contact handler with auto-capitalization
   const handleEmergencyContactChange = (field, value) => {
     if (field === 'type') {
       handleInputChange({
@@ -484,7 +743,6 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
           value: value
         }
       });
-      // Clear the contact number when type changes
       handleInputChange({
         target: {
           name: 'emergencyContact.mobile',
@@ -497,15 +755,6 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
           value: ''
         }
       });
-    } else if (field === 'firstName' || field === 'lastName') {
-      // Auto-capitalize first letter for name fields
-      const capitalizedValue = capitalizeFirstLetter(value);
-      handleInputChange({
-        target: {
-          name: `emergencyContact.${field}`,
-          value: capitalizedValue
-        }
-      });
     } else {
       handleInputChange({
         target: {
@@ -516,36 +765,33 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
     }
   };
 
-  // Format landline input
-  const formatLandlineInput = (e) => {
-    const { value } = e.target;
-    // Remove any non-digit characters and limit to 11 digits
-    const digitsOnly = value.replace(/\D/g, '').slice(0, 11);
-    handleEmergencyContactChange('landline', digitsOnly);
-  };
-
-  // Handle postal code change - allow manual input for current address
-  const handlePostalCodeChange = (e) => {
-    const { value } = e.target;
-    setPostalCode(value);
-    handleInputChange({
-      target: {
-        name: 'currentAddress.postalCode',
-        value: value
-      }
-    });
-  };
-
-  // Handle postal code change - allow manual input for permanent address
-  const handlePermanentPostalCodeChange = (e) => {
-    const { value } = e.target;
-    setPermanentPostalCode(value);
-    handleInputChange({
-      target: {
-        name: 'permanentAddress.postalCode',
-        value: value
-      }
-    });
+  const CheckboxGroup = ({ groupName, options }) => {
+    const currentRequirements = formData.requirements || {};
+    const currentGroup = currentRequirements[groupName] || {};
+    
+    return (
+      <div className="flex flex-col gap-1 mt-2">
+        {options.map((option) => (
+          <div key={option.value} className="flex items-center">
+            <input
+              id={`${groupName}-${option.value}`}
+              type="checkbox"
+              checked={!!currentGroup[option.value]}
+              onChange={(e) => handleCheckboxGroup(groupName, option.value, e.target.checked)}
+              className="h-3 w-3 text-[#400504] focus:ring-[#400504] border-gray-300 rounded"
+              disabled={
+                option.value === 'notYetSubmitted' 
+                  ? Object.keys(currentGroup).some(key => key !== 'notYetSubmitted' && currentGroup[key])
+                  : currentGroup.notYetSubmitted
+              }
+            />
+            <label htmlFor={`${groupName}-${option.value}`} className="ml-2 text-xs text-gray-700">
+              {option.label}
+            </label>
+          </div>
+        ))}
+      </div>
+    );
   };
 
   return (
@@ -553,24 +799,28 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
       <h3 className="text-lg font-semibold text-[#400504] border-b pb-2">Contact Information</h3>
       
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Contact Number - Updated with PhoneNumberValidation */}
         <div>
           <label htmlFor="contactNumber" className="block text-sm font-medium text-gray-700 mb-1">
             Contact Number *
           </label>
           <PhoneNumberValidation
             value={formData.contactNumber || ''}
-            onChange={(phoneNumber, isValid) => handlePhoneChange('contactNumber', phoneNumber, isValid)}
+            onChange={handleContactNumberChange}
             required={true}
-            digitsOnly={true}
+            placeholder="+63 912 345 6789"
           />
-          <p className="text-xs text-gray-500 mt-1">Philippines format only (+63)</p>
-          {errors.contactNumber && (
-            <p className="text-red-500 text-xs mt-1">{errors.contactNumber}</p>
-          )}
+          <div className="mt-1">
+            {errors.contactNumber && (
+              <p className="text-red-500 text-xs">{errors.contactNumber}</p>
+            )}
+            {getPhoneValidationStatus('contactNumber') && (
+              <div className={`text-xs px-2 py-1 rounded ${getPhoneValidationStatus('contactNumber').color} ${getPhoneValidationStatus('contactNumber').bg}`}>
+                {getPhoneValidationStatus('contactNumber').text}
+              </div>
+            )}
+          </div>
         </div>
         
-        {/* Email Address */}
         <div>
           <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
             Email Address *
@@ -580,22 +830,296 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
             name="email"
             type="email"
             value={formData.email || ''}
-            onChange={handleInputChange}
+            onChange={handleEmailChange}
             className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors ${
               errors.email ? 'border-red-500 bg-red-50' : 'border-gray-300'
+            } ${
+              emailValidation.isValid === false ? 'border-red-500 bg-red-50' : ''
+            } ${
+              emailValidation.isValid === true ? 'border-green-500 bg-green-50' : ''
             }`}
             placeholder="employee@email.com"
             required
-            aria-describedby={errors.email ? "email-error" : undefined}
           />
-          {errors.email && (
-            <p id="email-error" className="text-red-500 text-xs mt-1">{errors.email}</p>
-          )}
+          <div className="mt-1">
+            {errors.email && (
+              <p className="text-red-500 text-xs">{errors.email}</p>
+            )}
+            {getEmailValidationStatus() && (
+              <div className={`text-xs px-2 py-1 rounded flex items-center space-x-1 ${getEmailValidationStatus().color} ${getEmailValidationStatus().bg}`}>
+                <span>{getEmailValidationStatus().text}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t pt-4">
+        <h4 className="text-md font-semibold text-[#400504] mb-3">Government IDs</h4>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div>
+            <label htmlFor="tin" className="block text-sm font-medium text-gray-700 mb-1">
+              TIN Number
+            </label>
+            <input
+              id="tin"
+              name="tin"
+              type="text"
+              value={formData.tin || ''}
+              onChange={handleTINInput}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
+              placeholder="Enter 9-digit TIN"
+              maxLength={9}
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Must be exactly 9 digits
+            </p>
+            <CheckboxGroup 
+              groupName="tinRequirements"
+              options={[
+                { value: 'presentForm', label: 'Present 1904/1905 Form W/RDO Code 25B' },
+                { value: 'submitCopy', label: 'Submit PhotoCopy' },
+                { value: 'notYetSubmitted', label: 'Not Yet Submitted' }
+              ]}
+            />
+          </div>
+
+          <div>
+            <label htmlFor="sss" className="block text-sm font-medium text-gray-700 mb-1">
+              SSS Number
+            </label>
+            <input
+              id="sss"
+              name="sss"
+              type="text"
+              value={formData.sss || ''}
+              onChange={handleSSSInput}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
+              placeholder="Enter SSS number"
+              maxLength={12}
+            />
+            <CheckboxGroup 
+              groupName="sssRequirements"
+              options={[
+                { value: 'presentForm', label: 'Present E-1 Form' },
+                { value: 'presentID', label: 'Present ID' },
+                { value: 'submitCopy', label: 'Submit PhotoCopy' },
+                { value: 'notYetSubmitted', label: 'Not Yet Submitted' }
+              ]}
+            />
+          </div>
+          
+          <div>
+            <label htmlFor="philhealth" className="block text-sm font-medium text-gray-700 mb-1">
+              PhilHealth Number
+            </label>
+            <input
+              id="philhealth"
+              name="philhealth"
+              type="text"
+              value={formData.philhealth || ''}
+              onChange={handlePhilhealthInput}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
+              placeholder="Enter PhilHealth number"
+              maxLength={12}
+            />
+            <CheckboxGroup 
+              groupName="philhealthRequirements"
+              options={[
+                { value: 'presentMDR', label: 'Present Original MDR' },
+                { value: 'presentID', label: 'Present ID' },
+                { value: 'submitCopy', label: 'Submit PhotoCopy' },
+                { value: 'notYetSubmitted', label: 'Not Yet Submitted' }
+              ]}
+            />
+          </div>
+          
+          <div>
+            <label htmlFor="pagibig" className="block text-sm font-medium text-gray-700 mb-1">
+              PAG-IBIG Number
+            </label>
+            <input
+              id="pagibig"
+              name="pagibig"
+              type="text"
+              value={formData.pagibig || ''}
+              onChange={handlePagibigInput}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
+              placeholder="Enter PAG-IBIG number"
+              maxLength={12}
+            />
+            <CheckboxGroup 
+              groupName="pagibigRequirements"
+              options={[
+                { value: 'presentMDF', label: 'Present Original MDF' },
+                { value: 'presentID', label: 'Present ID' },
+                { value: 'submitCopy', label: 'Submit PhotoCopy' },
+                { value: 'notYetSubmitted', label: 'Not Yet Submitted' }
+              ]}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t pt-4">
+        <h4 className="text-md font-semibold text-[#400504] mb-3">BPLO Requirements (CSJDM)</h4>
+        
+        <div className="bg-gray-50 p-4 rounded-lg border space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              HEALTH CARD
+            </label>
+            <CheckboxGroup 
+              groupName="healthCardRequirements"
+              options={[
+                { value: 'presentOriginal', label: 'Present Original' },
+                { value: 'submitCopy', label: 'Submit PhotoCopy' },
+                { value: 'notYetSubmitted', label: 'Not Yet Submitted' }
+              ]}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Professional ID Card/License
+            </label>
+            <CheckboxGroup 
+              groupName="professionalIDRequirements"
+              options={[
+                { value: 'presentOriginal', label: 'Present Original' },
+                { value: 'submitCopy', label: 'Submit PhotoCopy' },
+                { value: 'notYetSubmitted', label: 'Not Yet Submitted' }
+              ]}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              DRIVER'S ID Card/License
+            </label>
+            <CheckboxGroup 
+              groupName="driversLicenseRequirements"
+              options={[
+                { value: 'presentOriginal', label: 'Present Original' },
+                { value: 'submitCopy', label: 'Submit PhotoCopy' },
+                { value: 'notYetSubmitted', label: 'Not Yet Submitted' }
+              ]}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Barangay Working Permit
+            </label>
+            <CheckboxGroup 
+              groupName="barangayWorkingPermitRequirements"
+              options={[
+                { value: 'submitCopy', label: 'Submit PhotoCopy' },
+                { value: 'submitOriginal', label: 'Submit ORIGINAL' },
+                { value: 'notYetSubmitted', label: 'Not Yet Submitted' }
+              ]}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t pt-4">
+        <h4 className="text-md font-semibold text-[#400504] mb-3">OCCUPATIONAL PERMIT</h4>
+        
+        <div className="bg-gray-50 p-4 rounded-lg border space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              BIRTH CERTIFICATE
+            </label>
+            <CheckboxGroup 
+              groupName="birthCertificateRequirements"
+              options={[
+                { value: 'presentOriginal', label: 'Present Original' },
+                { value: 'submitCopy', label: 'Submit PhotoCopy' },
+                { value: 'notYetSubmitted', label: 'Not Yet Submitted' }
+              ]}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Police Clearance or NBI Clearance
+            </label>
+            <CheckboxGroup 
+              groupName="policeNbiRequirements"
+              options={[
+                { value: 'submitCopy', label: 'Submit PhotoCopy' },
+                { value: 'submitOriginal', label: 'Submit ORIGINAL' },
+                { value: 'notYetSubmitted', label: 'Not Yet Submitted' }
+              ]}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Barangay Clearance
+            </label>
+            <CheckboxGroup 
+              groupName="barangayClearanceRequirements"
+              options={[
+                { value: 'submitCopy', label: 'Submit PhotoCopy' },
+                { value: 'submitOriginal', label: 'Submit ORIGINAL' },
+                { value: 'notYetSubmitted', label: 'Not Yet Submitted' }
+              ]}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              CEDULA
+            </label>
+            <CheckboxGroup 
+              groupName="cedulaRequirements"
+              options={[
+                { value: 'presentOriginal', label: 'Present Original' },
+                { value: 'submitCopy', label: 'Submit PhotoCopy' },
+                { value: 'notYetSubmitted', label: 'Not Yet Submitted' }
+              ]}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t pt-4">
+        <h4 className="text-md font-semibold text-[#400504] mb-3">Employment Information</h4>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label htmlFor="dateStart" className="block text-sm font-medium text-gray-700 mb-1">
+              DATE START
+            </label>
+            <input
+              id="dateStart"
+              name="dateStart"
+              type="date"
+              value={formData.dateStart || ''}
+              onChange={handleInputChange}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
+            />
+          </div>
+          
+          <div>
+            <label htmlFor="dateSeparated" className="block text-sm font-medium text-gray-700 mb-1">
+              DATE SEPARATED
+            </label>
+            <input
+              id="dateSeparated"
+              name="dateSeparated"
+              type="date"
+              value={formData.dateSeparated || ''}
+              onChange={handleInputChange}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
+            />
+          </div>
         </div>
       </div>
       
-      {/* Emergency Contact - Updated with First Name, Last Name, and Relationship Dropdown */}
-      <div className="space-y-4">
+      <div className="space-y-4 border-t pt-4">
         <h4 className="text-md font-semibold text-[#400504]">Emergency Contact</h4>
         
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -608,12 +1132,13 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
               name="emergencyContact.firstName"
               type="text"
               value={formData.emergencyContact?.firstName || ''}
-              onChange={(e) => handleEmergencyContactChange('firstName', e.target.value)}
+              onChange={handleTextInput}
               className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors ${
                 errors.emergencyContactFirstName ? 'border-red-500 bg-red-50' : 'border-gray-300'
               }`}
               placeholder="Enter first name"
               required
+              maxLength={30}
             />
             {errors.emergencyContactFirstName && (
               <p className="text-red-500 text-xs mt-1">{errors.emergencyContactFirstName}</p>
@@ -629,12 +1154,13 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
               name="emergencyContact.lastName"
               type="text"
               value={formData.emergencyContact?.lastName || ''}
-              onChange={(e) => handleEmergencyContactChange('lastName', e.target.value)}
+              onChange={handleTextInput}
               className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors ${
                 errors.emergencyContactLastName ? 'border-red-500 bg-red-50' : 'border-gray-300'
               }`}
               placeholder="Enter last name"
               required
+              maxLength={30}
             />
             {errors.emergencyContactLastName && (
               <p className="text-red-500 text-xs mt-1">{errors.emergencyContactLastName}</p>
@@ -668,7 +1194,6 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
           </div>
         </div>
         
-        {/* Combined Contact Type and Number Field */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="md:col-span-1">
             <label htmlFor="emergencyContactType" className="block text-sm font-medium text-gray-700 mb-1">
@@ -691,37 +1216,36 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
               Contact Number *
             </label>
             {formData.emergencyContact?.type === 'Mobile' ? (
-              <PhoneNumberValidation
-                value={formData.emergencyContact?.mobile || ''}
-                onChange={(phoneNumber, isValid) => handleEmergencyContactChange('mobile', phoneNumber)}
-                required={true}
-                digitsOnly={true}
-              />
+              <div>
+                <PhoneNumberValidation
+                  value={formData.emergencyContact?.mobile || ''}
+                  onChange={handleEmergencyMobileChange}
+                  required={true}
+                  placeholder="+63 912 345 6789"
+                />
+                {getPhoneValidationStatus('emergencyMobile') && (
+                  <div className={`text-xs px-2 py-1 rounded mt-1 ${getPhoneValidationStatus('emergencyMobile').color} ${getPhoneValidationStatus('emergencyMobile').bg}`}>
+                    {getPhoneValidationStatus('emergencyMobile').text}
+                  </div>
+                )}
+              </div>
             ) : (
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-                  <span className="text-gray-500 text-sm">+</span>
-                </div>
+              <div>
                 <input
                   id="emergencyContactNumber"
                   name="emergencyContact.landline"
                   type="text"
                   value={formData.emergencyContact?.landline || ''}
-                  onChange={formatLandlineInput}
-                  maxLength="11"
-                  placeholder="63271234567"
-                  className={`w-full pl-8 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors ${
+                  onChange={handleNumberInput}
+                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors ${
                     errors.emergencyContactNumber ? 'border-red-500 bg-red-50' : 'border-gray-300'
                   }`}
+                  placeholder="e.g., 02-123-4567"
                   required
+                  maxLength={12}
                 />
               </div>
             )}
-            <p className="text-xs text-gray-500 mt-1">
-              {formData.emergencyContact?.type === 'Mobile' 
-                ? 'Philippines mobile format (+63)' 
-                : 'Enter landline number with area code (e.g., 63271234567)'}
-            </p>
             {errors.emergencyContactNumber && (
               <p className="text-red-500 text-xs mt-1">{errors.emergencyContactNumber}</p>
             )}
@@ -729,124 +1253,87 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
         </div>
       </div>
       
-      {/* Government IDs - SIMPLE: No formatting */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div>
-          <label htmlFor="sss" className="block text-sm font-medium text-gray-700 mb-1">
-            SSS Number
-          </label>
-          <input
-            id="sss"
-            name="sss"
-            type="text"
-            value={formData.sss || ''}
-            onChange={handleGovernmentIdChange}
-            className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors ${
-              errors.sss ? 'border-red-500 bg-red-50' : 'border-gray-300'
-            }`}
-            placeholder="Enter SSS number"
-          />
-          {errors.sss && (
-            <p className="text-red-500 text-xs mt-1">{errors.sss}</p>
-          )}
-        </div>
-        
-        <div>
-          <label htmlFor="philhealth" className="block text-sm font-medium text-gray-700 mb-1">
-            PhilHealth Number
-          </label>
-          <input
-            id="philhealth"
-            name="philhealth"
-            type="text"
-            value={formData.philhealth || ''}
-            onChange={handleGovernmentIdChange}
-            className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors ${
-              errors.philhealth ? 'border-red-500 bg-red-50' : 'border-gray-300'
-            }`}
-            placeholder="Enter PhilHealth number"
-          />
-          {errors.philhealth && (
-            <p className="text-red-500 text-xs mt-1">{errors.philhealth}</p>
-          )}
-        </div>
-        
-        <div>
-          <label htmlFor="pagibig" className="block text-sm font-medium text-gray-700 mb-1">
-            PAG-IBIG Number
-          </label>
-          <input
-            id="pagibig"
-            name="pagibig"
-            type="text"
-            value={formData.pagibig || ''}
-            onChange={handleGovernmentIdChange}
-            className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors ${
-              errors.pagibig ? 'border-red-500 bg-red-50' : 'border-gray-300'
-            }`}
-            placeholder="Enter PAG-IBIG number"
-          />
-          {errors.pagibig && (
-            <p className="text-red-500 text-xs mt-1">{errors.pagibig}</p>
-          )}
-        </div>
-      </div>
-    
-      {/* Current Address with smaller fields */}
-      <div className="space-y-4">
+      <div className="space-y-4 border-t pt-4">
         <h4 className="text-md font-semibold text-[#400504] border-b pb-1">Current Address</h4>
         
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
-            <label htmlFor="currentBlk" className="block text-sm font-medium text-gray-700 mb-1">
-              Block
-            </label>
-            <input
-              id="currentBlk"
-              name="currentAddress.blk"
-              type="text"
-              value={formData.currentAddress?.blk || ''}
-              onChange={handleInputChange}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors text-sm"
-              placeholder="Block 1"
-              maxLength="10"
-            />
-          </div>
-          
-          <div>
-            <label htmlFor="currentLot" className="block text-sm font-medium text-gray-700 mb-1">
-              Lot
-            </label>
-            <input
-              id="currentLot"
-              name="currentAddress.lot"
-              type="text"
-              value={formData.currentAddress?.lot || ''}
-              onChange={handleInputChange}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors text-sm"
-              placeholder="Lot 2"
-              maxLength="10"
-            />
-          </div>
-
-          <div>
             <label htmlFor="currentStreet" className="block text-sm font-medium text-gray-700 mb-1">
-              Street
+              Street *
             </label>
             <input
               id="currentStreet"
               name="currentAddress.street"
               type="text"
               value={formData.currentAddress?.street || ''}
-              onChange={(e) => handleStreetChange('currentAddress', e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors text-sm"
-              placeholder="Main Street"
-              maxLength="20"
+              onChange={handleStreetInput}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
+              placeholder="Street name and number"
+              maxLength={30}
+              required
             />
+            <p className="text-xs text-gray-500 mt-1">
+              {formData.currentAddress?.street?.length || 0}/30
+            </p>
+          </div>
+          
+          <div>
+            <label htmlFor="currentArea" className="block text-sm font-medium text-gray-700 mb-1">
+              Area *
+            </label>
+            <input
+              id="currentArea"
+              name="currentAddress.area"
+              type="text"
+              value={formData.currentAddress?.area || ''}
+              onChange={handleAreaInput}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
+              placeholder="Area/Subdivision"
+              maxLength={30}
+              required
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              {formData.currentAddress?.area?.length || 0}/30
+            </p>
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Block/Lot *
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <input
+                  id="currentBlock"
+                  name="currentAddress.block"
+                  type="text"
+                  value={formData.currentAddress?.block || ''}
+                  onChange={handleBlockInput}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
+                  placeholder="Block"
+                  maxLength={4}
+                  required
+                />
+                <p className="text-xs text-gray-500 mt-1">Block</p>
+              </div>
+              <div>
+                <input
+                  id="currentLot"
+                  name="currentAddress.lot"
+                  type="text"
+                  value={formData.currentAddress?.lot || ''}
+                  onChange={handleLotInput}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
+                  placeholder="Lot"
+                  maxLength={4}
+                  required
+                />
+                <p className="text-xs text-gray-500 mt-1">Lot</p>
+              </div>
+            </div>
           </div>
         </div>
         
-        {/* Rest of the address fields remain the same */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <label htmlFor="currentProvince" className="block text-sm font-medium text-gray-700 mb-1">
@@ -859,19 +1346,16 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
               onChange={handleProvinceChange}
               className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors ${
                 errors.currentAddress?.province ? 'border-red-500 bg-red-50' : 'border-gray-300'
-              } ${loading.provinces ? 'opacity-50 cursor-not-allowed' : ''}`}
+              }`}
               required
-              disabled={loading.provinces}
-              aria-describedby="currentProvince-help"
             >
-              <option value="">{loading.provinces ? 'Loading provinces...' : 'Select Province'}</option>
+              <option value="">Select Province</option>
               {provinces.map(province => (
                 <option key={province.code} value={province.code}>
                   {province.name}
                 </option>
               ))}
             </select>
-            <p id="currentProvince-help" className="text-xs text-gray-500 mt-1">Select your province</p>
             {errors.currentAddress?.province && (
               <p className="text-red-500 text-xs mt-1">{errors.currentAddress.province}</p>
             )}
@@ -888,13 +1372,12 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
               onChange={handleCityChange}
               className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors disabled:bg-gray-100 disabled:cursor-not-allowed ${
                 errors.currentAddress?.city ? 'border-red-500 bg-red-50' : 'border-gray-300'
-              } ${loading.cities ? 'opacity-50' : ''}`}
+              }`}
               required
-              disabled={!formData.currentAddress?.provinceCode || loading.cities}
-              aria-describedby="currentCity-help"
+              disabled={!formData.currentAddress?.provinceCode}
             >
               <option value="">
-                {loading.cities ? 'Loading cities...' : !formData.currentAddress?.provinceCode ? 'Select province first' : 'Select City/Municipality'}
+                {!formData.currentAddress?.provinceCode ? 'Select province first' : 'Select City/Municipality'}
               </option>
               {cities.map(city => (
                 <option key={city.code} value={city.code}>
@@ -902,9 +1385,6 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
                 </option>
               ))}
             </select>
-            <p id="currentCity-help" className="text-xs text-gray-500 mt-1">
-              {!formData.currentAddress?.provinceCode ? 'Select province first' : 'Select your city/municipality'}
-            </p>
             {errors.currentAddress?.city && (
               <p className="text-red-500 text-xs mt-1">{errors.currentAddress.city}</p>
             )}
@@ -921,13 +1401,12 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
               onChange={handleBarangayChange}
               className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors disabled:bg-gray-100 disabled:cursor-not-allowed ${
                 errors.currentAddress?.barangay ? 'border-red-500 bg-red-50' : 'border-gray-300'
-              } ${loading.barangays ? 'opacity-50' : ''}`}
+              }`}
               required
-              disabled={!formData.currentAddress?.cityCode || loading.barangays}
-              aria-describedby="currentBarangay-help"
+              disabled={!formData.currentAddress?.cityCode}
             >
               <option value="">
-                {loading.barangays ? 'Loading barangays...' : !formData.currentAddress?.cityCode ? 'Select city first' : 'Select Barangay'}
+                {!formData.currentAddress?.cityCode ? 'Select city first' : 'Select Barangay'}
               </option>
               {barangays.map(barangay => (
                 <option key={barangay.code} value={barangay.code}>
@@ -935,9 +1414,6 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
                 </option>
               ))}
             </select>
-            <p id="currentBarangay-help" className="text-xs text-gray-500 mt-1">
-              {!formData.currentAddress?.cityCode ? 'Select city first' : 'Select your barangay'}
-            </p>
             {errors.currentAddress?.barangay && (
               <p className="text-red-500 text-xs mt-1">{errors.currentAddress.barangay}</p>
             )}
@@ -949,25 +1425,15 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
             <label htmlFor="currentPostalCode" className="block text-sm font-medium text-gray-700 mb-1">
               Postal Code
             </label>
-            <div className="relative">
-              <input
-                id="currentPostalCode"
-                name="currentAddress.postalCode"
-                type="text"
-                value={formData.currentAddress?.postalCode || postalCode || ''}
-                onChange={handlePostalCodeChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
-                placeholder={postalCode ? `Suggested: ${postalCode}` : "Enter postal code"}
-              />
-              {postalCode && !formData.currentAddress?.postalCode && (
-                <p className="text-xs text-blue-600 mt-1">
-                  Suggested: {postalCode} (based on selected city)
-                </p>
-              )}
-            </div>
-            <p className="text-xs text-gray-500 mt-1">
-              {postalCode ? "You can use the suggested code or enter your own" : "Enter your postal code"}
-            </p>
+            <input
+              id="currentPostalCode"
+              name="currentAddress.postalCode"
+              type="text"
+              value={formData.currentAddress?.postalCode || ''}
+              onChange={handleNumberInput}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
+              placeholder="Postal code"
+            />
           </div>
           
           <div>
@@ -987,7 +1453,6 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
         </div>
       </div>
       
-      {/* Same as Current Address Checkbox */}
       <div className="flex items-center">
         <input
           id="sameAsCurrent"
@@ -1002,62 +1467,88 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
         </label>
       </div>
       
-      {/* Permanent Address with smaller fields */}
       {!formData.sameAsCurrent && (
         <div className="space-y-4">
           <h4 className="text-md font-semibold text-[#400504] border-b pb-1">Permanent Address</h4>
           
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label htmlFor="permanentBlk" className="block text-sm font-medium text-gray-700 mb-1">
-                Block
-              </label>
-              <input
-                id="permanentBlk"
-                name="permanentAddress.blk"
-                type="text"
-                value={formData.permanentAddress?.blk || ''}
-                onChange={handleInputChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors text-sm"
-                placeholder="Block 1"
-                maxLength="10"
-              />
-            </div>
-            
-            <div>
-              <label htmlFor="permanentLot" className="block text-sm font-medium text-gray-700 mb-1">
-                Lot
-              </label>
-              <input
-                id="permanentLot"
-                name="permanentAddress.lot"
-                type="text"
-                value={formData.permanentAddress?.lot || ''}
-                onChange={handleInputChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors text-sm"
-                placeholder="Lot 2"
-                maxLength="10"
-              />
-            </div>
-
-            <div>
               <label htmlFor="permanentStreet" className="block text-sm font-medium text-gray-700 mb-1">
-                Street
+                Street *
               </label>
               <input
                 id="permanentStreet"
                 name="permanentAddress.street"
                 type="text"
                 value={formData.permanentAddress?.street || ''}
-                onChange={(e) => handleStreetChange('permanentAddress', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors text-sm"
-                placeholder="Main Street"
-                maxLength="20"
+                onChange={handleStreetInput}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
+                placeholder="Street name and number"
+                maxLength={30}
+                required
               />
+              <p className="text-xs text-gray-500 mt-1">
+                {formData.permanentAddress?.street?.length || 0}/30
+              </p>
+            </div>
+            
+            <div>
+              <label htmlFor="permanentArea" className="block text-sm font-medium text-gray-700 mb-1">
+                Area *
+              </label>
+              <input
+                id="permanentArea"
+                name="permanentAddress.area"
+                type="text"
+                value={formData.permanentAddress?.area || ''}
+                onChange={handleAreaInput}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
+                placeholder="Area/Subdivision"
+                maxLength={30}
+                required
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                {formData.permanentAddress?.area?.length || 0}/30
+              </p>
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Block/Lot *
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <input
+                    id="permanentBlock"
+                    name="permanentAddress.block"
+                    type="text"
+                    value={formData.permanentAddress?.block || ''}
+                    onChange={handleBlockInput}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
+                    placeholder="Block"
+                    maxLength={4}
+                    required
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Block</p>
+                </div>
+                <div>
+                  <input
+                    id="permanentLot"
+                    name="permanentAddress.lot"
+                    type="text"
+                    value={formData.permanentAddress?.lot || ''}
+                    onChange={handleLotInput}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
+                    placeholder="Lot"
+                    maxLength={4}
+                    required
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Lot</p>
+                </div>
+              </div>
             </div>
           </div>
           
-          {/* Rest of the permanent address fields with PSGC API */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label htmlFor="permanentProvince" className="block text-sm font-medium text-gray-700 mb-1">
@@ -1070,19 +1561,16 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
                 onChange={handlePermanentProvinceChange}
                 className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors ${
                   errors.permanentAddress?.province ? 'border-red-500 bg-red-50' : 'border-gray-300'
-                } ${loading.permanentProvinces ? 'opacity-50 cursor-not-allowed' : ''}`}
+                }`}
                 required
-                disabled={loading.permanentProvinces}
-                aria-describedby="permanentProvince-help"
               >
-                <option value="">{loading.permanentProvinces ? 'Loading provinces...' : 'Select Province'}</option>
+                <option value="">Select Province</option>
                 {permanentProvinces.map(province => (
                   <option key={province.code} value={province.code}>
                     {province.name}
                   </option>
                 ))}
               </select>
-              <p id="permanentProvince-help" className="text-xs text-gray-500 mt-1">Select your province</p>
               {errors.permanentAddress?.province && (
                 <p className="text-red-500 text-xs mt-1">{errors.permanentAddress.province}</p>
               )}
@@ -1099,13 +1587,12 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
                 onChange={handlePermanentCityChange}
                 className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors disabled:bg-gray-100 disabled:cursor-not-allowed ${
                   errors.permanentAddress?.city ? 'border-red-500 bg-red-50' : 'border-gray-300'
-                } ${loading.permanentCities ? 'opacity-50' : ''}`}
+                }`}
                 required
-                disabled={!formData.permanentAddress?.provinceCode || loading.permanentCities}
-                aria-describedby="permanentCity-help"
+                disabled={!formData.permanentAddress?.provinceCode}
               >
                 <option value="">
-                  {loading.permanentCities ? 'Loading cities...' : !formData.permanentAddress?.provinceCode ? 'Select province first' : 'Select City/Municipality'}
+                  {!formData.permanentAddress?.provinceCode ? 'Select province first' : 'Select City/Municipality'}
                 </option>
                 {permanentCities.map(city => (
                   <option key={city.code} value={city.code}>
@@ -1113,9 +1600,6 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
                   </option>
                 ))}
               </select>
-              <p id="permanentCity-help" className="text-xs text-gray-500 mt-1">
-                {!formData.permanentAddress?.provinceCode ? 'Select province first' : 'Select your city/municipality'}
-              </p>
               {errors.permanentAddress?.city && (
                 <p className="text-red-500 text-xs mt-1">{errors.permanentAddress.city}</p>
               )}
@@ -1132,13 +1616,12 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
                 onChange={handlePermanentBarangayChange}
                 className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors disabled:bg-gray-100 disabled:cursor-not-allowed ${
                   errors.permanentAddress?.barangay ? 'border-red-500 bg-red-50' : 'border-gray-300'
-                } ${loading.permanentBarangays ? 'opacity-50' : ''}`}
+                }`}
                 required
-                disabled={!formData.permanentAddress?.cityCode || loading.permanentBarangays}
-                aria-describedby="permanentBarangay-help"
+                disabled={!formData.permanentAddress?.cityCode}
               >
                 <option value="">
-                  {loading.permanentBarangays ? 'Loading barangays...' : !formData.permanentAddress?.cityCode ? 'Select city first' : 'Select Barangay'}
+                  {!formData.permanentAddress?.cityCode ? 'Select city first' : 'Select Barangay'}
                 </option>
                 {permanentBarangays.map(barangay => (
                   <option key={barangay.code} value={barangay.code}>
@@ -1146,9 +1629,6 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
                   </option>
                 ))}
               </select>
-              <p id="permanentBarangay-help" className="text-xs text-gray-500 mt-1">
-                {!formData.permanentAddress?.cityCode ? 'Select city first' : 'Select your barangay'}
-              </p>
               {errors.permanentAddress?.barangay && (
                 <p className="text-red-500 text-xs mt-1">{errors.permanentAddress.barangay}</p>
               )}
@@ -1160,25 +1640,15 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
               <label htmlFor="permanentPostalCode" className="block text-sm font-medium text-gray-700 mb-1">
                 Postal Code
               </label>
-              <div className="relative">
-                <input
-                  id="permanentPostalCode"
-                  name="permanentAddress.postalCode"
-                  type="text"
-                  value={formData.permanentAddress?.postalCode || permanentPostalCode || ''}
-                  onChange={handlePermanentPostalCodeChange}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
-                  placeholder={permanentPostalCode ? `Suggested: ${permanentPostalCode}` : "Enter postal code"}
-                />
-                {permanentPostalCode && !formData.permanentAddress?.postalCode && (
-                  <p className="text-xs text-blue-600 mt-1">
-                    Suggested: {permanentPostalCode} (based on selected city)
-                  </p>
-                )}
-              </div>
-              <p className="text-xs text-gray-500 mt-1">
-                {permanentPostalCode ? "You can use the suggested code or enter your own" : "Enter your postal code"}
-              </p>
+              <input
+                id="permanentPostalCode"
+                name="permanentAddress.postalCode"
+                type="text"
+                value={formData.permanentAddress?.postalCode || ''}
+                onChange={handleNumberInput}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
+                placeholder="Postal code"
+              />
             </div>
             
             <div>

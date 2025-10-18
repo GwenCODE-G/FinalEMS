@@ -28,32 +28,55 @@ const AttendanceTable = ({
     }
   };
 
-  const formatTime = (timeString) => {
-    if (!timeString) return '-';
-    const date = new Date(timeString);
-    return date.toLocaleTimeString('en-US', { 
-      hour12: false, 
-      hour: '2-digit', 
-      minute: '2-digit',
-      second: '2-digit'
-    });
+  // FIXED: No timezone conversion - times are already in PH timezone from backend
+  const formatTime = (timeValue) => {
+    if (!timeValue) return '-';
+    
+    try {
+      let date;
+      
+      // Handle different time value types
+      if (typeof timeValue === 'string') {
+        date = new Date(timeValue);
+      } else if (timeValue instanceof Date) {
+        date = timeValue;
+      } else if (timeValue && typeof timeValue === 'object') {
+        // Handle MongoDB Date object
+        date = new Date(timeValue);
+      } else {
+        return '-';
+      }
+      
+      // Check if date is valid
+      if (isNaN(date.getTime())) {
+        return '-';
+      }
+      
+      // FIXED: Date is already in PH timezone, just format it
+      const hours = date.getHours();
+      const minutes = date.getMinutes().toString().padStart(2, '0');
+      const ampm = hours >= 12 ? 'PM' : 'AM';
+      const displayHours = hours % 12 || 12;
+      return `${displayHours}:${minutes} ${ampm}`;
+    } catch (error) {
+      console.error('Error formatting time:', error, timeValue);
+      return '-';
+    }
   };
 
-  const formatHoursWorked = (hoursWorked, timeIn, timeOut) => {
-    if (hoursWorked && hoursWorked !== '0h 0m') {
-      return hoursWorked;
+  const formatDate = (dateString) => {
+    if (!dateString) return '-';
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleDateString('en-US', {
+        weekday: 'short',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      });
+    } catch (error) {
+      return '-';
     }
-    
-    if (timeIn && timeOut) {
-      const diff = new Date(timeOut) - new Date(timeIn);
-      const totalSeconds = Math.floor(diff / 1000);
-      const hours = Math.floor(totalSeconds / 3600);
-      const minutes = Math.floor((totalSeconds % 3600) / 60);
-      const seconds = totalSeconds % 60;
-      return `${hours}h ${minutes}m ${seconds}s`;
-    }
-    
-    return '-';
   };
 
   const formatRfidUid = (uid) => {
@@ -61,86 +84,72 @@ const AttendanceTable = ({
     return uid.toUpperCase();
   };
 
+  // FIXED: Use backend virtual fields or displayTimeIn/displayTimeOut if available
   const getAttendanceStatus = (employee) => {
     const employeeId = employee.employeeId;
     
+    console.log('Checking attendance for:', employeeId, 'Date:', selectedDate);
+    
+    // Check for real-time updates first
     const realTimeUpdate = realTimeUpdates[employeeId];
     if (realTimeUpdate) {
+      console.log('Real-time update found:', realTimeUpdate);
       return {
         status: realTimeUpdate.status,
         color: getStatusColor(realTimeUpdate.status),
         timeIn: realTimeUpdate.timeIn ? formatTime(realTimeUpdate.timeIn) : '-',
         timeOut: realTimeUpdate.timeOut ? formatTime(realTimeUpdate.timeOut) : '-',
-        isWorkDay: true,
-        hoursWorked: realTimeUpdate.hoursWorked || '0h 0m 0s'
+        isWorkDay: true
       };
     }
 
-    const todayAttendance = attendance.find(a => a.employeeId === employeeId);
-    const now = new Date();
+    // Check existing attendance records
+    const todayAttendance = Array.isArray(attendance) 
+      ? attendance.find(a => {
+          const matchesEmployee = a.employeeId === employeeId;
+          const matchesDate = a.date === selectedDate;
+          console.log(`Attendance check: ${employeeId} - Employee match: ${matchesEmployee}, Date match: ${matchesDate}`, a);
+          return matchesEmployee && matchesDate;
+        })
+      : null;
+    
+    console.log('Today attendance record:', todayAttendance);
+    
+    if (todayAttendance) {
+      // PRIORITY: Use backend-generated display fields (already formatted in PH time)
+      // If not available, format from the date objects (which are already in PH time)
+      const timeInDisplay = todayAttendance.displayTimeIn || 
+                           formatTime(todayAttendance.timeIn);
+      
+      const timeOutDisplay = todayAttendance.displayTimeOut || 
+                            formatTime(todayAttendance.timeOut);
+      
+      console.log('Display times - In:', timeInDisplay, 'Out:', timeOutDisplay);
+      console.log('Raw times from backend - In:', todayAttendance.timeIn, 'Out:', todayAttendance.timeOut);
+      
+      return {
+        status: todayAttendance.status || 'Present',
+        color: getStatusColor(todayAttendance.status || 'Present'),
+        timeIn: timeInDisplay,
+        timeOut: timeOutDisplay,
+        isWorkDay: true
+      };
+    }
+
+    // No attendance record found
+    console.log('No attendance record found for:', employeeId);
     const dayOfWeek = new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'long' });
     
-    const isWorkDay = employee.workDays ? employee.workDays[dayOfWeek] : 
+    const isWorkDay = employee.workSchedule ? 
+                     (employee.workSchedule[dayOfWeek]?.active || false) : 
                      ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'].includes(dayOfWeek);
     
-    if (!todayAttendance) {
-      if (isWorkDay) {
-        const workEndTime = employee.workSchedule?.[dayOfWeek]?.end || '17:00';
-        const [endHour, endMinute] = workEndTime.split(':').map(Number);
-        const endTime = new Date(selectedDate);
-        endTime.setHours(endHour, endMinute, 0, 0);
-        
-        if (now > endTime) {
-          return { 
-            status: 'Absent', 
-            color: getStatusColor('Absent'), 
-            timeIn: '-', 
-            timeOut: '-',
-            isWorkDay: true,
-            hoursWorked: '-'
-          };
-        }
-      }
-      
-      return { 
-        status: isWorkDay ? 'Pending' : 'No Work', 
-        color: getStatusColor(isWorkDay ? 'Pending' : 'No Work'), 
-        timeIn: '-', 
-        timeOut: '-',
-        isWorkDay,
-        hoursWorked: '-'
-      };
-    }
-    
-    if (todayAttendance.timeIn && !todayAttendance.timeOut) {
-      return { 
-        status: todayAttendance.status === 'Late' ? 'Late' : 'Present', 
-        color: getStatusColor(todayAttendance.status === 'Late' ? 'Late' : 'Present'), 
-        timeIn: formatTime(todayAttendance.timeIn),
-        timeOut: '-',
-        isWorkDay: true,
-        hoursWorked: '-'
-      };
-    }
-    
-    if (todayAttendance.timeOut) {
-      return { 
-        status: todayAttendance.status, 
-        color: getStatusColor(todayAttendance.status), 
-        timeIn: formatTime(todayAttendance.timeIn),
-        timeOut: formatTime(todayAttendance.timeOut),
-        isWorkDay: true,
-        hoursWorked: formatHoursWorked(todayAttendance.hoursWorked, todayAttendance.timeIn, todayAttendance.timeOut)
-      };
-    }
-    
     return { 
-      status: todayAttendance.status, 
-      color: getStatusColor(todayAttendance.status), 
+      status: isWorkDay ? 'Pending' : 'No Work', 
+      color: getStatusColor(isWorkDay ? 'Pending' : 'No Work'), 
       timeIn: '-', 
       timeOut: '-',
-      isWorkDay: true,
-      hoursWorked: '-'
+      isWorkDay
     };
   };
 
@@ -170,7 +179,6 @@ const AttendanceTable = ({
               <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">RFID UID</th>
               <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">Time In</th>
               <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">Time Out</th>
-              <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">Hours Worked</th>
               <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">Status</th>
               <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">Actions</th>
             </tr>
@@ -178,6 +186,9 @@ const AttendanceTable = ({
           <tbody className="divide-y divide-gray-200">
             {employees.map((employee) => {
               const attendanceStatus = getAttendanceStatus(employee);
+              
+              console.log('Rendering employee:', employee.employeeId, 'Attendance:', attendanceStatus);
+
               return (
                 <tr key={employee._id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-3">
@@ -200,19 +211,28 @@ const AttendanceTable = ({
                   <td className="px-4 py-3 text-sm text-gray-900">
                     <div className="flex items-center">
                       <FaClock className="mr-1 text-gray-400 text-xs" />
-                      <span className="text-xs font-mono">{attendanceStatus.timeIn}</span>
+                      <span className="text-xs font-mono">
+                        {attendanceStatus.timeIn === '-' ? 'Not Checked In' : attendanceStatus.timeIn}
+                      </span>
                     </div>
+                    {attendanceStatus.timeIn !== '-' && (
+                      <div className="text-xs text-gray-400 mt-1">
+                        {selectedDate === new Date().toISOString().split('T')[0] ? 'Today' : formatDate(selectedDate)}
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-900">
                     <div className="flex items-center">
                       <FaSignOutAlt className="mr-1 text-gray-400 text-xs" />
-                      <span className="text-xs font-mono">{attendanceStatus.timeOut}</span>
+                      <span className="text-xs font-mono">
+                        {attendanceStatus.timeOut === '-' ? 'Not Checked Out' : attendanceStatus.timeOut}
+                      </span>
                     </div>
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-900">
-                    <div className="text-xs font-mono text-center">
-                      {attendanceStatus.hoursWorked}
-                    </div>
+                    {attendanceStatus.timeOut !== '-' && (
+                      <div className="text-xs text-gray-400 mt-1">
+                        Shift completed
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${attendanceStatus.color}`}>
@@ -221,6 +241,7 @@ const AttendanceTable = ({
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex space-x-1">
+                      {/* History of Attendance Button */}
                       <button
                         onClick={() => onViewHistory(employee)}
                         className="text-indigo-600 hover:text-indigo-900 p-1 rounded bg-indigo-50 text-xs transition-colors"
@@ -230,15 +251,25 @@ const AttendanceTable = ({
                       </button>
                       <button
                         onClick={() => onManualTimeIn(employee)}
-                        className="text-orange-600 hover:text-orange-900 p-1 rounded bg-orange-50 text-xs transition-colors"
+                        className={`p-1 rounded text-xs transition-colors ${
+                          attendanceStatus.timeIn !== '-' 
+                            ? 'text-gray-400 bg-gray-100 cursor-not-allowed' 
+                            : 'text-orange-600 hover:text-orange-900 bg-orange-50'
+                        }`}
                         title="Manual Time In"
+                        disabled={attendanceStatus.timeIn !== '-'}
                       >
                         <FaClock />
                       </button>
                       <button
                         onClick={() => onManualTimeOut(employee)}
-                        className="text-blue-600 hover:text-blue-900 p-1 rounded bg-blue-50 text-xs transition-colors"
+                        className={`p-1 rounded text-xs transition-colors ${
+                          attendanceStatus.timeIn === '-' || attendanceStatus.timeOut !== '-' 
+                            ? 'text-gray-400 bg-gray-100 cursor-not-allowed' 
+                            : 'text-blue-600 hover:text-blue-900 bg-blue-50'
+                        }`}
                         title="Manual Time Out"
+                        disabled={attendanceStatus.timeIn === '-' || attendanceStatus.timeOut !== '-'}
                       >
                         <FaSignOutAlt />
                       </button>

@@ -13,10 +13,22 @@ const ArchiveEmployeeModal = ({
   const [error, setError] = useState('');
 
   const handleArchive = async () => {
+    if (!employee || !employee._id) {
+      setError('Invalid employee data');
+      return;
+    }
+
     setLoading(true);
     setError('');
 
     try {
+      console.log('🔄 Archiving employee:', {
+        id: employee._id,
+        name: `${employee.firstName} ${employee.lastName}`,
+        currentStatus: employee.status
+      });
+      
+      // Use DELETE endpoint to archive (this changes status to 'Archived')
       const response = await fetch(`${apiBaseUrl}/api/employees/${employee._id}`, {
         method: 'DELETE',
         headers: {
@@ -25,15 +37,17 @@ const ArchiveEmployeeModal = ({
       });
 
       const result = await response.json();
+      console.log('Archive response:', result);
 
       if (response.ok && result.success) {
+        console.log('✅ Employee archived successfully');
         onEmployeeArchived();
         onClose();
       } else {
         throw new Error(result.message || 'Failed to archive employee');
       }
     } catch (error) {
-      console.error('Archive error:', error);
+      console.error('❌ Archive error:', error);
       setError(error.message);
     } finally {
       setLoading(false);
@@ -41,10 +55,22 @@ const ArchiveEmployeeModal = ({
   };
 
   const handleRestore = async () => {
+    if (!employee || !employee._id) {
+      setError('Invalid employee data');
+      return;
+    }
+
     setLoading(true);
     setError('');
 
     try {
+      console.log('🔄 Restoring employee:', {
+        id: employee._id,
+        name: `${employee.firstName} ${employee.lastName}`,
+        currentStatus: employee.status
+      });
+      
+      // Use PATCH endpoint to restore (this changes status to 'Active')
       const response = await fetch(`${apiBaseUrl}/api/employees/${employee._id}/restore`, {
         method: 'PATCH',
         headers: {
@@ -53,15 +79,17 @@ const ArchiveEmployeeModal = ({
       });
 
       const result = await response.json();
+      console.log('Restore response:', result);
 
       if (response.ok && result.success) {
+        console.log('✅ Employee restored successfully');
         onEmployeeRestored();
         onClose();
       } else {
         throw new Error(result.message || 'Failed to restore employee');
       }
     } catch (error) {
-      console.error('Restore error:', error);
+      console.error('❌ Restore error:', error);
       setError(error.message);
     } finally {
       setLoading(false);
@@ -93,6 +121,7 @@ const ArchiveEmployeeModal = ({
             <button
               onClick={onClose}
               className="text-gray-400 hover:text-gray-600 transition-colors"
+              disabled={loading}
             >
               <XMarkIcon className="h-6 w-6" />
             </button>
@@ -102,7 +131,12 @@ const ArchiveEmployeeModal = ({
           <div className="p-6">
             {error && (
               <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
-                {error}
+                <div className="flex items-center">
+                  <svg className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  {error}
+                </div>
               </div>
             )}
 
@@ -127,10 +161,18 @@ const ArchiveEmployeeModal = ({
               </p>
 
               <div className="bg-gray-50 p-4 rounded-lg mb-4">
-                <p className="text-sm font-medium text-gray-900">{employee.firstName} {employee.middleName} {employee.lastName}</p>
-                <p className="text-sm text-gray-500">{employee.position} • {employee.department}</p>
+                <p className="text-sm font-medium text-gray-900">
+                  {employee.firstName} {employee.middleName} {employee.lastName}
+                </p>
+                <p className="text-sm text-gray-500">
+                  {employee.position} • {employee.department}
+                </p>
                 <p className="text-sm text-gray-500">ID: {employee.employeeId}</p>
-                <p className="text-sm text-gray-500">Status: <span className={`font-semibold ${isArchived ? 'text-orange-600' : 'text-green-600'}`}>{employee.status}</span></p>
+                <p className="text-sm text-gray-500">
+                  Status: <span className={`font-semibold ${isArchived ? 'text-orange-600' : 'text-green-600'}`}>
+                    {employee.status}
+                  </span>
+                </p>
               </div>
             </div>
           </div>

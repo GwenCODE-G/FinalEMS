@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   FaClock, FaSignOutAlt, FaIdCard, 
-  FaUserTimes, FaClock as FaClockIcon, FaHistory
+  FaUserTimes, FaClock as FaClockIcon, FaHistory,
+  FaSort, FaSortUp, FaSortDown, FaSync
 } from 'react-icons/fa';
 
 const AttendanceTable = ({
@@ -15,6 +16,31 @@ const AttendanceTable = ({
   onAssignRfid,
   onRemoveRfid
 }) => {
+  const [sortConfig, setSortConfig] = useState({ key: 'recentActivity', direction: 'desc' });
+  const [localUpdates, setLocalUpdates] = useState({});
+  const [autoRefresh, setAutoRefresh] = useState(true);
+
+  // Merge real-time updates with local updates
+  useEffect(() => {
+    if (realTimeUpdates && Object.keys(realTimeUpdates).length > 0) {
+      setLocalUpdates(prev => ({
+        ...prev,
+        ...realTimeUpdates
+      }));
+    }
+  }, [realTimeUpdates]);
+
+  // Auto-refresh every 10 seconds if enabled
+  useEffect(() => {
+    if (!autoRefresh) return;
+
+    const interval = setInterval(() => {
+      setLocalUpdates(prev => ({ ...prev }));
+    }, 10000);
+
+    return () => clearInterval(interval);
+  }, [autoRefresh]);
+
   const getStatusColor = (status) => {
     switch (status) {
       case 'Present': return 'text-green-600 bg-green-100';
@@ -84,62 +110,48 @@ const AttendanceTable = ({
     return uid.toUpperCase();
   };
 
-  // FIXED: Use backend virtual fields or displayTimeIn/displayTimeOut if available
+  // FIXED: Enhanced attendance status detection with real-time updates
   const getAttendanceStatus = (employee) => {
     const employeeId = employee.employeeId;
     
-    console.log('Checking attendance for:', employeeId, 'Date:', selectedDate);
-    
     // Check for real-time updates first
-    const realTimeUpdate = realTimeUpdates[employeeId];
+    const realTimeUpdate = localUpdates[employeeId];
     if (realTimeUpdate) {
-      console.log('Real-time update found:', realTimeUpdate);
       return {
         status: realTimeUpdate.status,
         color: getStatusColor(realTimeUpdate.status),
         timeIn: realTimeUpdate.timeIn ? formatTime(realTimeUpdate.timeIn) : '-',
         timeOut: realTimeUpdate.timeOut ? formatTime(realTimeUpdate.timeOut) : '-',
-        isWorkDay: true
+        isWorkDay: true,
+        timestamp: realTimeUpdate.timestamp,
+        hoursWorked: realTimeUpdate.hoursWorked || '0h 0m'
       };
     }
 
     // Check existing attendance records
     const todayAttendance = Array.isArray(attendance) 
-      ? attendance.find(a => {
-          const matchesEmployee = a.employeeId === employeeId;
-          const matchesDate = a.date === selectedDate;
-          console.log(`Attendance check: ${employeeId} - Employee match: ${matchesEmployee}, Date match: ${matchesDate}`, a);
-          return matchesEmployee && matchesDate;
-        })
+      ? attendance.find(a => a.employeeId === employeeId && a.date === selectedDate)
       : null;
-    
-    console.log('Today attendance record:', todayAttendance);
     
     if (todayAttendance) {
       // PRIORITY: Use backend-generated display fields (already formatted in PH time)
-      // If not available, format from the date objects (which are already in PH time)
-      const timeInDisplay = todayAttendance.displayTimeIn || 
-                           formatTime(todayAttendance.timeIn);
-      
-      const timeOutDisplay = todayAttendance.displayTimeOut || 
-                            formatTime(todayAttendance.timeOut);
-      
-      console.log('Display times - In:', timeInDisplay, 'Out:', timeOutDisplay);
-      console.log('Raw times from backend - In:', todayAttendance.timeIn, 'Out:', todayAttendance.timeOut);
+      const timeInDisplay = todayAttendance.displayTimeIn || formatTime(todayAttendance.timeIn);
+      const timeOutDisplay = todayAttendance.displayTimeOut || formatTime(todayAttendance.timeOut);
       
       return {
         status: todayAttendance.status || 'Present',
         color: getStatusColor(todayAttendance.status || 'Present'),
         timeIn: timeInDisplay,
         timeOut: timeOutDisplay,
-        isWorkDay: true
+        isWorkDay: true,
+        timestamp: todayAttendance.timeOut ? new Date(todayAttendance.timeOut).getTime() : 
+                  todayAttendance.timeIn ? new Date(todayAttendance.timeIn).getTime() : 0,
+        hoursWorked: todayAttendance.hoursWorked || '0h 0m'
       };
     }
 
     // No attendance record found
-    console.log('No attendance record found for:', employeeId);
     const dayOfWeek = new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'long' });
-    
     const isWorkDay = employee.workSchedule ? 
                      (employee.workSchedule[dayOfWeek]?.active || false) : 
                      ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'].includes(dayOfWeek);
@@ -149,9 +161,82 @@ const AttendanceTable = ({
       color: getStatusColor(isWorkDay ? 'Pending' : 'No Work'), 
       timeIn: '-', 
       timeOut: '-',
-      isWorkDay
+      isWorkDay,
+      timestamp: 0,
+      hoursWorked: '0h 0m'
     };
   };
+
+  // Sort employees based on current sort configuration
+  const getSortedEmployees = () => {
+    if (!employees.length) return [];
+
+    return [...employees].sort((a, b) => {
+      const aStatus = getAttendanceStatus(a);
+      const bStatus = getAttendanceStatus(b);
+
+      switch (sortConfig.key) {
+        case 'recentActivity':
+          // Sort by most recent activity (time out > time in > no activity)
+          const aTime = aStatus.timestamp;
+          const bTime = bStatus.timestamp;
+          return sortConfig.direction === 'desc' ? bTime - aTime : aTime - bTime;
+
+        case 'name':
+          const aName = `${a.firstName} ${a.lastName}`.toLowerCase();
+          const bName = `${b.firstName} ${b.lastName}`.toLowerCase();
+          return sortConfig.direction === 'desc' ? 
+            bName.localeCompare(aName) : aName.localeCompare(bName);
+
+        case 'department':
+          return sortConfig.direction === 'desc' ? 
+            (b.department || '').localeCompare(a.department || '') : 
+            (a.department || '').localeCompare(b.department || '');
+
+        case 'position':
+          return sortConfig.direction === 'desc' ? 
+            (b.position || '').localeCompare(a.position || '') : 
+            (a.position || '').localeCompare(b.position || '');
+
+        case 'employeeId':
+          return sortConfig.direction === 'desc' ? 
+            (b.employeeId || '').localeCompare(a.employeeId || '') : 
+            (a.employeeId || '').localeCompare(b.employeeId || '');
+
+        case 'status':
+          const statusOrder = { 'Completed': 1, 'Late': 2, 'Present': 3, 'Pending': 4, 'No Work': 5, 'Absent': 6 };
+          const aStatusOrder = statusOrder[aStatus.status] || 7;
+          const bStatusOrder = statusOrder[bStatus.status] || 7;
+          return sortConfig.direction === 'desc' ? 
+            bStatusOrder - aStatusOrder : aStatusOrder - bStatusOrder;
+
+        default:
+          return 0;
+      }
+    });
+  };
+
+  const handleSort = (key) => {
+    setSortConfig(prevConfig => ({
+      key,
+      direction: prevConfig.key === key && prevConfig.direction === 'asc' ? 'desc' : 'asc'
+    }));
+  };
+
+  const getSortIcon = (key) => {
+    if (sortConfig.key !== key) return <FaSort className="text-gray-400" />;
+    return sortConfig.direction === 'desc' ? <FaSortDown className="text-[#400504]" /> : <FaSortUp className="text-[#400504]" />;
+  };
+
+  const toggleAutoRefresh = () => {
+    setAutoRefresh(!autoRefresh);
+  };
+
+  const manualRefresh = () => {
+    setLocalUpdates(prev => ({ ...prev }));
+  };
+
+  const sortedEmployees = getSortedEmployees();
 
   if (employees.length === 0) {
     return (
@@ -169,34 +254,116 @@ const AttendanceTable = ({
 
   return (
     <div className="bg-white rounded-lg shadow-sm border flex-1 overflow-hidden flex flex-col">
+      {/* Table Header with Controls */}
+      <div className="flex justify-between items-center p-4 border-b bg-gray-50">
+        <div className="flex items-center space-x-4">
+          <h3 className="text-lg font-semibold text-[#400504]">
+            Employee Attendance ({sortedEmployees.length} employees)
+          </h3>
+          <div className="flex items-center space-x-2 text-sm">
+            <button
+              onClick={manualRefresh}
+              className="flex items-center space-x-1 px-3 py-1 bg-[#400504] text-white rounded hover:bg-[#300303] transition-colors"
+            >
+              <FaSync className="text-xs" />
+              <span>Refresh Now</span>
+            </button>
+            <button
+              onClick={toggleAutoRefresh}
+              className={`flex items-center space-x-1 px-3 py-1 rounded border transition-colors ${
+                autoRefresh 
+                  ? 'bg-green-100 text-green-700 border-green-300' 
+                  : 'bg-gray-100 text-gray-700 border-gray-300'
+              }`}
+            >
+              <div className={`w-2 h-2 rounded-full ${autoRefresh ? 'bg-green-500' : 'bg-gray-400'}`}></div>
+              <span>Auto-refresh: {autoRefresh ? 'ON' : 'OFF'}</span>
+            </button>
+          </div>
+        </div>
+        <div className="text-xs text-gray-500">
+          Sorted by: <span className="font-semibold text-[#400504]">
+            {sortConfig.key === 'recentActivity' ? 'Recent Activity' : 
+             sortConfig.key === 'name' ? 'Name' :
+             sortConfig.key === 'department' ? 'Department' :
+             sortConfig.key === 'position' ? 'Position' :
+             sortConfig.key === 'status' ? 'Status' : 'Employee ID'}
+          </span> ({sortConfig.direction === 'desc' ? 'Newest First' : 'Oldest First'})
+        </div>
+      </div>
+
+      {/* Table */}
       <div className="overflow-x-auto flex-1">
         <table className="min-w-full table-auto">
           <thead className="bg-[#400504] text-white">
             <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">Employee</th>
-              <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider hidden lg:table-cell">Department</th>
-              <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider hidden md:table-cell">Position</th>
+              <th 
+                className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider cursor-pointer hover:bg-[#300303] transition-colors"
+                onClick={() => handleSort('name')}
+              >
+                <div className="flex items-center space-x-1">
+                  <span>Employee</span>
+                  {getSortIcon('name')}
+                </div>
+              </th>
+              <th 
+                className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider hidden lg:table-cell cursor-pointer hover:bg-[#300303] transition-colors"
+                onClick={() => handleSort('department')}
+              >
+                <div className="flex items-center space-x-1">
+                  <span>Department</span>
+                  {getSortIcon('department')}
+                </div>
+              </th>
+              <th 
+                className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider hidden md:table-cell cursor-pointer hover:bg-[#300303] transition-colors"
+                onClick={() => handleSort('position')}
+              >
+                <div className="flex items-center space-x-1">
+                  <span>Position</span>
+                  {getSortIcon('position')}
+                </div>
+              </th>
               <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">RFID UID</th>
               <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">Time In</th>
               <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">Time Out</th>
-              <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">Status</th>
+              <th 
+                className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider cursor-pointer hover:bg-[#300303] transition-colors"
+                onClick={() => handleSort('status')}
+              >
+                <div className="flex items-center space-x-1">
+                  <span>Status</span>
+                  {getSortIcon('status')}
+                </div>
+              </th>
               <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
-            {employees.map((employee) => {
+            {sortedEmployees.map((employee) => {
               const attendanceStatus = getAttendanceStatus(employee);
+              const hasRecentUpdate = localUpdates[employee.employeeId];
               
-              console.log('Rendering employee:', employee.employeeId, 'Attendance:', attendanceStatus);
-
               return (
-                <tr key={employee._id} className="hover:bg-gray-50 transition-colors">
+                <tr 
+                  key={employee._id} 
+                  className={`hover:bg-gray-50 transition-all duration-300 ${
+                    hasRecentUpdate ? 'bg-blue-50 border-l-4 border-blue-500' : ''
+                  }`}
+                >
                   <td className="px-4 py-3">
-                    <div>
-                      <div className="font-medium text-gray-900 text-sm">
-                        {employee.firstName} {employee.lastName}
+                    <div className="flex items-center space-x-2">
+                      <div>
+                        <div className="font-medium text-gray-900 text-sm">
+                          {employee.firstName} {employee.lastName}
+                          {hasRecentUpdate && (
+                            <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 animate-pulse">
+                              NEW
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-gray-500">{employee.employeeId}</div>
                       </div>
-                      <div className="text-xs text-gray-500">{employee.employeeId}</div>
                     </div>
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-900 hidden lg:table-cell">{employee.department}</td>
@@ -230,13 +397,16 @@ const AttendanceTable = ({
                     </div>
                     {attendanceStatus.timeOut !== '-' && (
                       <div className="text-xs text-gray-400 mt-1">
-                        Shift completed
+                        {attendanceStatus.hoursWorked} worked
                       </div>
                     )}
                   </td>
                   <td className="px-4 py-3">
                     <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${attendanceStatus.color}`}>
                       {attendanceStatus.status}
+                      {attendanceStatus.status === 'Late' && attendanceStatus.timeIn !== '-' && (
+                        <span className="ml-1 text-xs">({Math.round((new Date() - new Date(attendanceStatus.timestamp)) / (1000 * 60))}m ago)</span>
+                      )}
                     </span>
                   </td>
                   <td className="px-4 py-3">
@@ -296,6 +466,29 @@ const AttendanceTable = ({
             })}
           </tbody>
         </table>
+      </div>
+
+      {/* Table Footer */}
+      <div className="px-4 py-3 bg-gray-50 border-t text-xs text-gray-500 flex justify-between items-center">
+        <div>
+          Showing {sortedEmployees.length} employees • 
+          Auto-refresh: <span className={autoRefresh ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>
+            {autoRefresh ? 'ON (10s)' : 'OFF'}
+          </span>
+        </div>
+        <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-2">
+            <div className="w-3 h-3 rounded-full bg-blue-500"></div>
+            <span>Recent activity</span>
+          </div>
+          <button
+            onClick={() => handleSort('recentActivity')}
+            className="text-[#400504] hover:text-[#300303] font-semibold flex items-center space-x-1"
+          >
+            <span>Sort by Recent Activity</span>
+            {getSortIcon('recentActivity')}
+          </button>
+        </div>
       </div>
     </div>
   );

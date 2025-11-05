@@ -3,27 +3,21 @@ const router = express.Router();
 const moment = require('moment-timezone');
 const Attendance = require('../models/Attendance');
 const Employee = require('../models/Employee');
+const Leave = require('../models/Leave');
 
-// ==================== PHILIPPINE TIME HELPER FUNCTIONS ====================
-
-// Get current Philippine DateTime
 const getCurrentDateTime = () => {
   return moment().tz('Asia/Manila').toDate();
 };
 
-// Get current Philippine Date string (YYYY-MM-DD)
 const getCurrentDate = () => {
   return moment().tz('Asia/Manila').format('YYYY-MM-DD');
 };
 
-// Parse time string to PH DateTime (for manual entries)
 const parsePHDateTime = (dateStr, timeStr) => {
-  // Combine date and time, then parse in Manila timezone
   const dateTimeStr = `${dateStr} ${timeStr}`;
   return moment.tz(dateTimeStr, 'YYYY-MM-DD HH:mm:ss', 'Asia/Manila').toDate();
 };
 
-// Format time for display (already in PH time)
 const formatTime = (date) => {
   if (!date) return '';
   const hours = date.getHours();
@@ -33,9 +27,6 @@ const formatTime = (date) => {
   return `${displayHours}:${minutes} ${ampm}`;
 };
 
-// ==================== TIME VALIDATION FUNCTIONS ====================
-
-// Check if time is within Time In hours (6:00 AM - 5:00 PM)
 const checkTimeInHours = (currentTime) => {
   const phMoment = moment(currentTime).tz('Asia/Manila');
   const hours = phMoment.hour();
@@ -44,7 +35,6 @@ const checkTimeInHours = (currentTime) => {
   
   console.log('Manual Time In Check - PH Time:', phMoment.format('h:mm A'));
   
-  // STRICT CHECK: Time In only allowed between 6:00 AM - 5:00 PM (360 to 1020 minutes)
   if (totalMinutes >= 360 && totalMinutes < 1020) {
     console.log('Manual Time In ALLOWED');
     return { allowed: true, message: 'TIMEIN_ALLOWED' };
@@ -54,7 +44,6 @@ const checkTimeInHours = (currentTime) => {
   }
 };
 
-// Check if time is within Time Out hours (6:00 AM - 7:00 PM)
 const checkTimeOutHours = (currentTime) => {
   const phMoment = moment(currentTime).tz('Asia/Manila');
   const hours = phMoment.hour();
@@ -63,7 +52,6 @@ const checkTimeOutHours = (currentTime) => {
   
   console.log('Manual Time Out Check - PH Time:', phMoment.format('h:mm A'));
   
-  // STRICT CHECK: Time Out only allowed between 6:00 AM - 7:00 PM (360 to 1140 minutes)
   if (totalMinutes >= 360 && totalMinutes < 1140) {
     console.log('Manual Time Out ALLOWED');
     return { allowed: true, message: 'TIMEOUT_ALLOWED' };
@@ -73,14 +61,12 @@ const checkTimeOutHours = (currentTime) => {
   }
 };
 
-// Check if time is within working hours (6:00 AM - 7:00 PM)
 const checkWorkingHours = (currentTime) => {
   const phMoment = moment(currentTime).tz('Asia/Manila');
   const hours = phMoment.hour();
   const minutes = phMoment.minute();
   const totalMinutes = hours * 60 + minutes;
   
-  // STRICT CHECK: No manual recording outside 6:00 AM - 7:00 PM
   if (totalMinutes >= 360 && totalMinutes < 1140) {
     return { allowed: true, message: 'WITHIN_WORKING_HOURS' };
   } else {
@@ -88,7 +74,6 @@ const checkWorkingHours = (currentTime) => {
   }
 };
 
-// Check if employee is late (after 8:00 AM)
 const checkIfLate = (timeIn) => {
   const timeInPH = moment(timeIn);
   const cutoffTime = moment(timeIn).hour(8).minute(0).second(0);
@@ -101,9 +86,6 @@ const checkIfLate = (timeIn) => {
   return { isLate: false, lateMinutes: 0 };
 };
 
-// ==================== ROUTES ====================
-
-// GET ALL ATTENDANCE RECORDS
 router.get('/', async (req, res) => {
     try {
         const { 
@@ -166,7 +148,6 @@ router.get('/', async (req, res) => {
     }
 });
 
-// GET TODAY'S ATTENDANCE
 router.get('/today', async (req, res) => {
     try {
         const today = getCurrentDate();
@@ -194,7 +175,6 @@ router.get('/today', async (req, res) => {
     }
 });
 
-// GET ATTENDANCE BY DATE RANGE
 router.get('/range', async (req, res) => {
     try {
         const { startDate, endDate, employeeId } = req.query;
@@ -237,7 +217,6 @@ router.get('/range', async (req, res) => {
     }
 });
 
-// GET ATTENDANCE SUMMARY
 router.get('/summary', async (req, res) => {
     try {
         const { date } = req.query;
@@ -246,10 +225,11 @@ router.get('/summary', async (req, res) => {
         const totalEmployees = await Employee.countDocuments({ status: 'Active' });
         const todayAttendance = await Attendance.find({ date: targetDate });
         
-        const present = todayAttendance.filter(a => a.timeIn).length;
-        const absent = totalEmployees - present;
-        const completed = todayAttendance.filter(a => a.timeOut).length;
-        const late = todayAttendance.filter(a => a.status === 'Late').length;
+        const present = todayAttendance.filter(a => a.timeIn && !a.isLeaveRecord).length;
+        const onLeave = todayAttendance.filter(a => a.isLeaveRecord).length;
+        const absent = totalEmployees - present - onLeave;
+        const completed = todayAttendance.filter(a => a.timeOut && !a.isLeaveRecord).length;
+        const late = todayAttendance.filter(a => a.status === 'Late' && !a.isLeaveRecord).length;
         const onTime = present - late;
 
         res.json({
@@ -259,6 +239,7 @@ router.get('/summary', async (req, res) => {
                 summary: {
                     present,
                     absent,
+                    onLeave,
                     completed,
                     late,
                     onTime,
@@ -278,7 +259,6 @@ router.get('/summary', async (req, res) => {
     }
 });
 
-// MANUAL ATTENDANCE RECORDING - ENHANCED FOR MIXED RFID/MANUAL SUPPORT
 router.post('/manual', async (req, res) => {
     try {
         const {
@@ -304,12 +284,19 @@ router.post('/manual', async (req, res) => {
             });
         }
 
+        const isOnLeave = await Leave.isEmployeeOnLeave(employeeId, date);
+        if (isOnLeave) {
+            return res.status(400).json({
+                success: false,
+                message: 'Cannot record attendance while on leave'
+            });
+        }
+
         let attendance = await Attendance.findOne({
             employeeId: employeeId,
             date: date
         });
 
-        // Parse the time input (format: HH:mm or HH:mm:ss)
         const timeWithSeconds = time.length === 5 ? `${time}:00` : time;
         const phDateTime = parsePHDateTime(date, timeWithSeconds);
 
@@ -322,7 +309,6 @@ router.post('/manual', async (req, res) => {
         console.log('Action:', action);
         console.log('===========================================');
 
-        // STRICT CHECK: First check if we're within working hours
         const workingHoursCheck = checkWorkingHours(phDateTime);
         if (!workingHoursCheck.allowed) {
             return res.status(400).json({
@@ -348,7 +334,6 @@ router.post('/manual', async (req, res) => {
                 });
             }
 
-            // Check if late
             const lateCheck = checkIfLate(phDateTime);
 
             if (!attendance) {
@@ -365,7 +350,8 @@ router.post('/manual', async (req, res) => {
                     recordType: 'manual',
                     recordedBy: 'Admin',
                     timeInSource: 'manual',
-                    notes: notes
+                    notes: notes,
+                    isLeaveRecord: false
                 });
             } else {
                 attendance.timeIn = phDateTime;
@@ -375,6 +361,7 @@ router.post('/manual', async (req, res) => {
                 attendance.recordType = 'manual';
                 attendance.recordedBy = 'Admin';
                 attendance.notes = notes;
+                attendance.isLeaveRecord = false;
                 
                 if (attendance.timeOut) {
                     attendance.calculateHoursWorked();
@@ -420,7 +407,6 @@ router.post('/manual', async (req, res) => {
                 });
             }
 
-            // Use the enhanced processTimeOut method that handles mixed RFID/manual with 10-minute validation
             try {
                 const result = await Attendance.processTimeOut(employee.employeeId, phDateTime, 'manual');
                 
@@ -451,7 +437,6 @@ router.post('/manual', async (req, res) => {
             });
         }
 
-        // Emit Socket.IO event if available
         const io = req.app.get('io');
         if (io) {
             io.emit('attendance-update', {
@@ -487,7 +472,6 @@ router.post('/manual', async (req, res) => {
     }
 });
 
-// BULK MANUAL ATTENDANCE RECORDING
 router.post('/manual/bulk', async (req, res) => {
     try {
         const { records } = req.body;
@@ -531,6 +515,18 @@ router.post('/manual/bulk', async (req, res) => {
                     continue;
                 }
 
+                const isOnLeave = await Leave.isEmployeeOnLeave(employeeId, date);
+                if (isOnLeave) {
+                    results.failed.push({
+                        employeeId,
+                        date,
+                        time,
+                        action,
+                        error: 'Cannot record attendance while on leave'
+                    });
+                    continue;
+                }
+
                 let attendance = await Attendance.findOne({
                     employeeId: employeeId,
                     date: date
@@ -539,7 +535,6 @@ router.post('/manual/bulk', async (req, res) => {
                 const timeWithSeconds = time.length === 5 ? `${time}:00` : time;
                 const phDateTime = parsePHDateTime(date, timeWithSeconds);
 
-                // Check working hours
                 const workingHoursCheck = checkWorkingHours(phDateTime);
                 if (!workingHoursCheck.allowed) {
                     results.failed.push({
@@ -593,7 +588,8 @@ router.post('/manual/bulk', async (req, res) => {
                             recordType: 'manual',
                             recordedBy: 'Admin',
                             timeInSource: 'manual',
-                            notes: notes
+                            notes: notes,
+                            isLeaveRecord: false
                         });
                     } else {
                         attendance.timeIn = phDateTime;
@@ -603,6 +599,7 @@ router.post('/manual/bulk', async (req, res) => {
                         attendance.recordType = 'manual';
                         attendance.recordedBy = 'Admin';
                         attendance.notes = notes;
+                        attendance.isLeaveRecord = false;
                     }
 
                     const result = await attendance.save();
@@ -701,7 +698,6 @@ router.post('/manual/bulk', async (req, res) => {
 
         console.log(`Bulk manual attendance completed: ${results.successful.length} successful, ${results.failed.length} failed`);
 
-        // Emit socket events for successful records
         const io = req.app.get('io');
         if (io && results.successful.length > 0) {
             results.successful.forEach(record => {
@@ -734,7 +730,6 @@ router.post('/manual/bulk', async (req, res) => {
     }
 });
 
-// GET EMPLOYEE ATTENDANCE HISTORY
 router.get('/employee/:employeeId', async (req, res) => {
     try {
         const { employeeId } = req.params;
@@ -769,7 +764,6 @@ router.get('/employee/:employeeId', async (req, res) => {
     }
 });
 
-// UPDATE ATTENDANCE RECORD
 router.put('/:id', async (req, res) => {
     try {
         const { timeIn, timeOut, notes, status } = req.body;
@@ -782,19 +776,23 @@ router.put('/:id', async (req, res) => {
             });
         }
 
+        if (attendance.isLeaveRecord) {
+            return res.status(400).json({
+                success: false,
+                message: 'Cannot update leave records'
+            });
+        }
+
         const updateData = {};
         if (timeIn) {
-            // Parse timeIn as PH time
             updateData.timeIn = moment.tz(timeIn, 'Asia/Manila').toDate();
         }
         if (timeOut) {
-            // Parse timeOut as PH time
             updateData.timeOut = moment.tz(timeOut, 'Asia/Manila').toDate();
         }
         if (notes !== undefined) updateData.notes = notes;
         if (status !== undefined) updateData.status = status;
 
-        // If updating time out, validate the 10-minute rule
         if (timeOut && attendance.timeIn) {
             const proposedTimeOut = moment.tz(timeOut, 'Asia/Manila').toDate();
             const validation = attendance.canTimeOut(proposedTimeOut, 'manual');
@@ -858,7 +856,6 @@ router.put('/:id', async (req, res) => {
     }
 });
 
-// DELETE ATTENDANCE RECORD
 router.delete('/:id', async (req, res) => {
     try {
         const attendance = await Attendance.findByIdAndDelete(req.params.id);
@@ -885,7 +882,6 @@ router.delete('/:id', async (req, res) => {
     }
 });
 
-// GET DASHBOARD STATISTICS
 router.get('/dashboard/stats', async (req, res) => {
     try {
         const stats = await Attendance.getDashboardStats();
@@ -903,7 +899,6 @@ router.get('/dashboard/stats', async (req, res) => {
     }
 });
 
-// GET REAL-TIME SUMMARY FOR EMPLOYEE
 router.get('/summary/realtime/:employeeId', async (req, res) => {
     try {
         const { employeeId } = req.params;
@@ -931,7 +926,6 @@ router.get('/summary/realtime/:employeeId', async (req, res) => {
     }
 });
 
-// GET MONTHLY SUMMARY FOR EMPLOYEE
 router.get('/summary/monthly/:employeeId', async (req, res) => {
     try {
         const { employeeId } = req.params;
@@ -964,7 +958,6 @@ router.get('/summary/monthly/:employeeId', async (req, res) => {
     }
 });
 
-// GET ATTENDANCE TRENDS
 router.get('/trends/:employeeId', async (req, res) => {
     try {
         const { employeeId } = req.params;
@@ -1023,23 +1016,29 @@ router.get('/trends/:employeeId', async (req, res) => {
                 monthlyTrends[monthKey] = {
                     present: 0,
                     late: 0,
+                    leave: 0,
                     totalHours: 0,
                     totalMinutes: 0
                 };
             }
             
-            monthlyTrends[monthKey].present++;
-            if (record.status === 'Late') {
-                monthlyTrends[monthKey].late++;
+            if (record.isLeaveRecord) {
+                monthlyTrends[monthKey].leave++;
+            } else if (record.timeIn) {
+                monthlyTrends[monthKey].present++;
+                if (record.status === 'Late') {
+                    monthlyTrends[monthKey].late++;
+                }
+                monthlyTrends[monthKey].totalMinutes += record.totalMinutes || 0;
+                monthlyTrends[monthKey].totalHours = Math.round((monthlyTrends[monthKey].totalMinutes / 60) * 10) / 10;
             }
-            monthlyTrends[monthKey].totalMinutes += record.totalMinutes || 0;
-            monthlyTrends[monthKey].totalHours = Math.round((monthlyTrends[monthKey].totalMinutes / 60) * 10) / 10;
         });
 
         const trends = Object.entries(monthlyTrends).map(([month, data]) => ({
             month,
             present: data.present,
             late: data.late,
+            leave: data.leave,
             totalHours: data.totalHours,
             averageHours: data.present > 0 ? Math.round((data.totalHours / data.present) * 10) / 10 : 0
         }));
@@ -1072,7 +1071,6 @@ router.get('/trends/:employeeId', async (req, res) => {
     }
 });
 
-// GET ATTENDANCE BY SOURCE (RFID/MANUAL)
 router.get('/source/:source', async (req, res) => {
     try {
         const { source } = req.params;
@@ -1089,7 +1087,8 @@ router.get('/source/:source', async (req, res) => {
             $or: [
                 { timeInSource: source },
                 { timeOutSource: source }
-            ]
+            ],
+            isLeaveRecord: false
         };
 
         if (date) {
@@ -1129,7 +1128,6 @@ router.get('/source/:source', async (req, res) => {
     }
 });
 
-// GET MIXED ATTENDANCE RECORDS (RFID time in + Manual time out or vice versa)
 router.get('/mixed', async (req, res) => {
     try {
         const { date, page = 1, limit = 50 } = req.query;
@@ -1138,7 +1136,8 @@ router.get('/mixed', async (req, res) => {
             $or: [
                 { timeInSource: 'rfid', timeOutSource: 'manual' },
                 { timeInSource: 'manual', timeOutSource: 'rfid' }
-            ]
+            ],
+            isLeaveRecord: false
         };
 
         if (date) {
@@ -1178,7 +1177,6 @@ router.get('/mixed', async (req, res) => {
     }
 });
 
-// CORRECT ATTENDANCE RECORD
 router.patch('/:id/correct', async (req, res) => {
     try {
         const { timeIn, timeOut, date, notes } = req.body;
@@ -1188,6 +1186,13 @@ router.patch('/:id/correct', async (req, res) => {
             return res.status(404).json({
                 success: false,
                 message: 'Attendance record not found'
+            });
+        }
+
+        if (attendance.isLeaveRecord) {
+            return res.status(400).json({
+                success: false,
+                message: 'Cannot correct leave records'
             });
         }
 
@@ -1215,7 +1220,6 @@ router.patch('/:id/correct', async (req, res) => {
             updateData.notes = notes;
         }
 
-        // Validate time out if both times are being updated
         if (timeIn && timeOut) {
             const timeInDate = moment.tz(timeIn, 'Asia/Manila').toDate();
             const timeOutDate = moment.tz(timeOut, 'Asia/Manila').toDate();
@@ -1235,7 +1239,6 @@ router.patch('/:id/correct', async (req, res) => {
             { new: true, runValidators: true }
         );
 
-        // Recalculate hours worked if both times are present
         if (updatedRecord.timeIn && updatedRecord.timeOut) {
             updatedRecord.calculateHoursWorked();
             updatedRecord.status = 'Completed';
@@ -1268,74 +1271,161 @@ router.patch('/:id/correct', async (req, res) => {
     }
 });
 
-// GET ATTENDANCE STATISTICS BY DEPARTMENT
+router.post('/leave', async (req, res) => {
+  try {
+    const { employeeId, startDate, endDate, reason, leaveType, status = 'Approved' } = req.body;
+
+    if (!employeeId || !startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        message: 'Employee ID, start date, and end date are required'
+      });
+    }
+
+    const employee = await Employee.findOne({ employeeId: employeeId });
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        message: 'Employee not found'
+      });
+    }
+
+    const result = await Attendance.assignLeave(
+      employeeId, 
+      startDate, 
+      endDate, 
+      reason, 
+      leaveType, 
+      status
+    );
+
+    res.status(201).json({
+      success: true,
+      message: result.message,
+      data: result
+    });
+
+  } catch (error) {
+    console.error('Error assigning leave:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error assigning leave',
+      error: error.message
+    });
+  }
+});
+
+router.get('/leaves/:employeeId?', async (req, res) => {
+  try {
+    const { employeeId } = req.params;
+    const { startDate, endDate } = req.query;
+
+    let leaves = [];
+
+    if (employeeId) {
+      leaves = await Attendance.getEmployeeLeaves(employeeId, startDate, endDate);
+    } else {
+      const Leave = require('../models/Leave');
+      let filter = { status: 'Approved' };
+      
+      if (startDate && endDate) {
+        filter.$or = [
+          {
+            startDate: { $lte: new Date(endDate) },
+            endDate: { $gte: new Date(startDate) }
+          }
+        ];
+      }
+
+      leaves = await Leave.find(filter)
+        .sort({ startDate: -1 })
+        .select('-__v');
+    }
+
+    res.json({
+      success: true,
+      data: leaves,
+      count: leaves.length
+    });
+
+  } catch (error) {
+    console.error('Error fetching leaves:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching leaves',
+      error: error.message
+    });
+  }
+});
+
+router.delete('/leave/:employeeId', async (req, res) => {
+  try {
+    const { employeeId } = req.params;
+    const { startDate, endDate } = req.body;
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        message: 'Start date and end date are required'
+      });
+    }
+
+    const result = await Attendance.removeLeave(employeeId, startDate, endDate);
+
+    res.json({
+      success: true,
+      message: result.message,
+      data: result
+    });
+
+  } catch (error) {
+    console.error('Error removing leave:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error removing leave assignment',
+      error: error.message
+    });
+  }
+});
+
+router.get('/leave/check/:employeeId', async (req, res) => {
+  try {
+    const { employeeId } = req.params;
+    const { date } = req.query;
+
+    const checkDate = date || getCurrentDate();
+    
+    const isOnLeave = await Attendance.isEmployeeOnLeave(employeeId, checkDate);
+
+    res.json({
+      success: true,
+      data: {
+        employeeId,
+        date: checkDate,
+        isOnLeave
+      }
+    });
+
+  } catch (error) {
+    console.error('Error checking leave status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error checking leave status',
+      error: error.message
+    });
+  }
+});
+
 router.get('/stats/department', async (req, res) => {
     try {
         const { date } = req.query;
         const targetDate = date || getCurrentDate();
 
-        const departmentStats = await Attendance.aggregate([
-            { $match: { date: targetDate } },
-            {
-                $group: {
-                    _id: '$department',
-                    totalEmployees: { $addToSet: '$employeeId' },
-                    present: {
-                        $sum: {
-                            $cond: [{ $ifNull: ['$timeIn', false] }, 1, 0]
-                        }
-                    },
-                    completed: {
-                        $sum: {
-                            $cond: [{ $ifNull: ['$timeOut', false] }, 1, 0]
-                        }
-                    },
-                    late: {
-                        $sum: {
-                            $cond: [{ $eq: ['$status', 'Late'] }, 1, 0]
-                        }
-                    }
-                }
-            },
-            {
-                $project: {
-                    department: '$_id',
-                    totalEmployees: { $size: '$totalEmployees' },
-                    present: 1,
-                    completed: 1,
-                    late: 1,
-                    absent: {
-                        $subtract: [
-                            { $size: '$totalEmployees' },
-                            '$present'
-                        ]
-                    },
-                    attendanceRate: {
-                        $multiply: [
-                            {
-                                $cond: [
-                                    { $eq: [{ $size: '$totalEmployees' }, 0] },
-                                    0,
-                                    {
-                                        $divide: [
-                                            '$present',
-                                            { $size: '$totalEmployees' }
-                                        ]
-                                    }
-                                ]
-                            },
-                            100
-                        ]
-                    }
-                }
-            },
-            { $sort: { department: 1 } }
-        ]);
+        const departmentStats = await Attendance.getDepartmentStats(targetDate);
 
         res.json({
             success: true,
-            data: departmentStats,
-            date: targetDate
+            data: departmentStats
         });
     } catch (error) {
         console.error('Error fetching department statistics:', error);
@@ -1347,7 +1437,6 @@ router.get('/stats/department', async (req, res) => {
     }
 });
 
-// HEALTH CHECK ENDPOINT
 router.get('/health', (req, res) => {
     const health = {
         status: 'OK',
@@ -1358,7 +1447,8 @@ router.get('/health', (req, res) => {
             manualAttendance: true,
             mixedMode: true,
             timeValidation: true,
-            bulkOperations: true
+            bulkOperations: true,
+            leaveManagement: true
         }
     };
     

@@ -31,9 +31,7 @@ const workScheduleSchema = new mongoose.Schema({
   Sunday: { active: { type: Boolean, default: false }, start: { type: String, default: '' }, end: { type: String, default: '' } }
 });
 
-// Enhanced requirements schema to match frontend - FIXED LOGIC
 const requirementsSchema = new mongoose.Schema({
-  // Government IDs requirements
   tinRequirements: {
     presentForm: { type: Boolean, default: false },
     submitCopy: { type: Boolean, default: false },
@@ -57,8 +55,6 @@ const requirementsSchema = new mongoose.Schema({
     submitCopy: { type: Boolean, default: false },
     notYetSubmitted: { type: Boolean, default: true }
   },
-  
-  // BPLO Requirements
   healthCardRequirements: {
     presentOriginal: { type: Boolean, default: false },
     submitCopy: { type: Boolean, default: false },
@@ -79,8 +75,6 @@ const requirementsSchema = new mongoose.Schema({
     submitOriginal: { type: Boolean, default: false },
     notYetSubmitted: { type: Boolean, default: true }
   },
-  
-  // Occupational Permit Requirements
   birthCertificateRequirements: {
     presentOriginal: { type: Boolean, default: false },
     submitCopy: { type: Boolean, default: false },
@@ -104,7 +98,6 @@ const requirementsSchema = new mongoose.Schema({
 }, { _id: false });
 
 const employeeSchema = new mongoose.Schema({
-  // Basic Information
   employeeId: { type: String, required: true, unique: true, trim: true, uppercase: true },
   firstName: { type: String, required: true, trim: true },
   middleName: { type: String, trim: true },
@@ -112,16 +105,12 @@ const employeeSchema = new mongoose.Schema({
   suffix: { type: String, trim: true },
   gender: { type: String, enum: ['Male', 'Female'], required: true },
   civilStatus: { type: String, enum: ['Single', 'Married', 'Divorced', 'Widowed', 'Separated', ''], default: '' },
-  religion: { type: String, trim: true },
+  religion: { type: String, required: true, trim: true },
   birthday: { type: Date, required: true },
-  birthplace: { type: String, trim: true },
+  birthplace: { type: String, required: true, trim: true },
   age: { type: Number, required: true, min: 18, max: 100 },
-  
-  // Contact Information
   email: { type: String, required: true, unique: true, trim: true, lowercase: true },
   contactNumber: { type: String, required: true, trim: true },
-  
-  // 🔑 AUTHENTICATION FIELDS (ADDED)
   password: {
     type: String,
     required: false
@@ -139,22 +128,14 @@ const employeeSchema = new mongoose.Schema({
     ipAddress: String,
     userAgent: String
   }],
-  
-  // Government IDs
   tin: { type: String, trim: true },
   sss: { type: String, trim: true },
   philhealth: { type: String, trim: true },
   pagibig: { type: String, trim: true },
-  
-  // Emergency Contact
   emergencyContact: emergencyContactSchema,
-  
-  // Address Information
   currentAddress: { type: addressSchema, required: true },
   permanentAddress: addressSchema,
   sameAsCurrent: { type: Boolean, default: false },
-  
-  // Employment Information
   department: { type: String, required: true, trim: true },
   position: { type: String, required: true, trim: true },
   teachingLevel: [{ type: String, enum: ['Pre-Kindergarten', 'Kindergarten', 'Elementary', 'High-School', 'Senior High-School'] }],
@@ -168,21 +149,43 @@ const employeeSchema = new mongoose.Schema({
     Saturday: { active: false, start: '', end: '' },
     Sunday: { active: false, start: '', end: '' }
   })},
-  
-  // Profile Picture
   profilePicture: String,
-  
-  // Requirements - FIXED SCHEMA
-  requirements: { type: requirementsSchema, default: () => ({}) },
-  
-  // Employment Dates
+  requirements: { 
+    type: requirementsSchema, 
+    default: () => ({
+      tinRequirements: { presentForm: false, submitCopy: false, notYetSubmitted: true },
+      sssRequirements: { presentForm: false, presentID: false, submitCopy: false, notYetSubmitted: true },
+      philhealthRequirements: { presentMDR: false, presentID: false, submitCopy: false, notYetSubmitted: true },
+      pagibigRequirements: { presentMDF: false, presentID: false, submitCopy: false, notYetSubmitted: true },
+      healthCardRequirements: { presentOriginal: false, submitCopy: false, notYetSubmitted: true },
+      professionalIDRequirements: { presentOriginal: false, submitCopy: false, notYetSubmitted: true },
+      driversLicenseRequirements: { presentOriginal: false, submitCopy: false, notYetSubmitted: true },
+      barangayWorkingPermitRequirements: { submitCopy: false, submitOriginal: false, notYetSubmitted: true },
+      birthCertificateRequirements: { presentOriginal: false, submitCopy: false, notYetSubmitted: true },
+      policeNbiRequirements: { submitCopy: false, submitOriginal: false, notYetSubmitted: true },
+      barangayClearanceRequirements: { submitCopy: false, submitOriginal: false, notYetSubmitted: true },
+      cedulaRequirements: { presentOriginal: false, submitCopy: false, notYetSubmitted: true }
+    })
+  },
   dateStart: { type: Date },
   dateSeparated: { type: Date },
   dateEmployed: { type: Date, default: Date.now },
-  
-  // System Fields
   status: { type: String, enum: ['Active', 'Archived'], default: 'Active' },
-  rfidUid: { type: String, unique: true, sparse: true, trim: true, uppercase: true },
+  rfidUid: { 
+    type: String, 
+    unique: true, 
+    sparse: true, 
+    trim: true, 
+    uppercase: true,
+    set: function(value) {
+      if (!value) return value;
+      const cleanUid = value.replace(/\s/g, '').toUpperCase();
+      if (cleanUid.length === 8) {
+        return cleanUid.match(/.{1,2}/g)?.join(' ').toUpperCase() || cleanUid;
+      }
+      return cleanUid;
+    }
+  },
   isRfidAssigned: { type: Boolean, default: false },
   createdBy: { type: String, default: 'System' },
   lastModifiedBy: { type: String, default: 'System' }
@@ -193,7 +196,6 @@ const employeeSchema = new mongoose.Schema({
   toObject: { virtuals: true }
 });
 
-// Indexes
 employeeSchema.index({ employeeId: 1 });
 employeeSchema.index({ email: 1 });
 employeeSchema.index({ rfidUid: 1 }, { sparse: true });
@@ -201,7 +203,6 @@ employeeSchema.index({ status: 1 });
 employeeSchema.index({ department: 1 });
 employeeSchema.index({ position: 1 });
 
-// 🔑 VIRTUAL FIELDS (PRESERVED AND ENHANCED)
 employeeSchema.virtual('fullName').get(function() {
   return `${this.firstName} ${this.middleName ? this.middleName + ' ' : ''}${this.lastName}`.trim();
 });
@@ -244,54 +245,52 @@ employeeSchema.virtual('employmentDuration').get(function() {
   return `${months} month${months > 1 ? 's' : ''}`;
 });
 
-// 🔑 PASSWORD HANDLING MIDDLEWARE (PRESERVED)
+employeeSchema.virtual('normalizedRfidUid').get(function() {
+  if (!this.rfidUid) return null;
+  return this.rfidUid.replace(/\s/g, '').toUpperCase();
+});
+
 employeeSchema.pre('save', async function(next) {
-  // Only process password if it's modified or this is a new document
   if (!this.isModified('password') && !this.isNew) {
     return next();
   }
 
-  // If password is already hashed (starts with $2b$), don't re-hash
   if (this.password && this.password.startsWith('$2b$')) {
-    console.log('🔑 Password already hashed, skipping re-hash');
+    console.log('Password already hashed, skipping re-hash');
     return next();
   }
 
   try {
-    // For new employees: set default password if none provided
     if (this.isNew && (!this.password || this.password.trim() === '')) {
       const defaultPassword = `Brighton${this.employeeId ? this.employeeId.slice(-4) : '1234'}`;
-      console.log(`🔑 Setting default password for new employee: ${defaultPassword}`);
+      console.log(`Setting default password for new employee: ${defaultPassword}`);
       
       const saltRounds = 12;
       this.password = await bcrypt.hash(defaultPassword, saltRounds);
       this.requiresPasswordChange = true;
       
-      console.log('✅ Default password set successfully');
+      console.log('Default password set successfully');
     } 
-    // For existing employees: hash the modified password
     else if (this.isModified('password') && this.password && this.password.trim() !== '') {
-      console.log('🔑 Hashing modified password');
+      console.log('Hashing modified password');
       const saltRounds = 12;
       this.password = await bcrypt.hash(this.password, saltRounds);
-      console.log('✅ Password hashed successfully');
+      console.log('Password hashed successfully');
     }
     
     next();
   } catch (error) {
-    console.error('❌ Error in password middleware:', error);
+    console.error('Error in password middleware:', error);
     next(error);
   }
 });
 
-// 🔑 PASSWORD COMPARISON METHOD (PRESERVED)
 employeeSchema.methods.comparePassword = async function(candidatePassword) {
   if (!this.password) {
-    console.log('❌ No password hash stored for employee');
+    console.log('No password hash stored for employee');
     return false;
   }
   
-  // If candidate password is empty, return false immediately
   if (!candidatePassword || candidatePassword.trim() === '') {
     return false;
   }
@@ -300,17 +299,15 @@ employeeSchema.methods.comparePassword = async function(candidatePassword) {
     const result = await bcrypt.compare(candidatePassword, this.password);
     return result;
   } catch (error) {
-    console.error('❌ Password comparison error:', error);
+    console.error('Password comparison error:', error);
     return false;
   }
 };
 
-// 🔑 METHOD TO GET DEFAULT PASSWORD (PRESERVED)
 employeeSchema.methods.getDefaultPassword = function() {
   return `Brighton${this.employeeId ? this.employeeId.slice(-4) : '1234'}`;
 };
 
-// 🔑 AGE CALCULATION MIDDLEWARE (PRESERVED)
 employeeSchema.pre('save', function(next) {
   if (this.birthday && this.isModified('birthday')) {
     const today = new Date();
@@ -327,7 +324,35 @@ employeeSchema.pre('save', function(next) {
   next();
 });
 
-// 🔑 INSTANCE METHODS (PRESERVED AND ENHANCED)
+employeeSchema.pre('save', function(next) {
+  if (this.rfidUid && this.isModified('rfidUid')) {
+    const cleanUid = this.rfidUid.replace(/\s/g, '');
+    
+    if (cleanUid.length === 8) {
+      this.rfidUid = cleanUid.match(/.{1,2}/g).join(' ');
+      console.log(`Formatted RFID UID: "${this.rfidUid}" (Normalized: "${cleanUid}")`);
+    } else {
+      this.rfidUid = cleanUid;
+      console.log(`Invalid RFID UID length: ${cleanUid}, expected 8 characters`);
+    }
+    
+    this.isRfidAssigned = true;
+  } else if (!this.rfidUid && this.isModified('rfidUid')) {
+    this.isRfidAssigned = false;
+    console.log('RFID UID removed, employee unassigned');
+  }
+
+  if (this.isModified() && !this.lastModifiedBy) {
+    this.lastModifiedBy = 'System';
+  }
+
+  if (this.sameAsCurrent && this.currentAddress) {
+    this.permanentAddress = { ...this.currentAddress.toObject() };
+  }
+
+  next();
+});
+
 employeeSchema.methods.getFullName = function() {
   return `${this.firstName} ${this.middleName ? this.middleName + ' ' : ''}${this.lastName}`.trim();
 };
@@ -350,6 +375,11 @@ employeeSchema.methods.hasRFID = function() {
   return this.isRfidAssigned && this.rfidUid;
 };
 
+employeeSchema.methods.getNormalizedRfidUid = function() {
+  if (!this.rfidUid) return null;
+  return this.rfidUid.replace(/\s/g, '').toUpperCase();
+};
+
 employeeSchema.methods.getScheduleForDay = function(day) {
   const normalizedDay = day.charAt(0).toUpperCase() + day.slice(1).toLowerCase();
   return this.workSchedule[normalizedDay];
@@ -360,7 +390,17 @@ employeeSchema.methods.worksOnDay = function(day) {
   return schedule ? schedule.active : false;
 };
 
-// 🔑 STATIC METHODS (PRESERVED AND ENHANCED)
+employeeSchema.methods.doesRfidMatch = function(scannedUid) {
+  if (!this.rfidUid || !scannedUid) return false;
+  
+  const normalizedScanned = scannedUid.replace(/\s/g, '').toUpperCase();
+  const normalizedAssigned = this.rfidUid.replace(/\s/g, '').toUpperCase();
+  
+  console.log(`RFID Matching: "${normalizedScanned}" vs "${normalizedAssigned}"`);
+  
+  return normalizedScanned === normalizedAssigned;
+};
+
 employeeSchema.statics.findActive = function() {
   return this.find({ status: 'Active' });
 };
@@ -378,10 +418,47 @@ employeeSchema.statics.findByPosition = function(position) {
 };
 
 employeeSchema.statics.findByRFID = function(rfidUid) {
+  if (!rfidUid) return null;
+  
+  const normalizedUid = rfidUid.replace(/\s/g, '').toUpperCase();
+  console.log(`Searching employee by RFID: "${normalizedUid}"`);
+  
   return this.findOne({ 
-    rfidUid: rfidUid.toUpperCase().replace(/\s/g, ''), 
-    status: 'Active' 
+    status: 'Active',
+    $or: [
+      { rfidUid: { $regex: new RegExp(`^${normalizedUid}$`, 'i') } },
+      { rfidUid: { $regex: new RegExp(normalizedUid, 'i') } }
+    ]
   });
+};
+
+employeeSchema.statics.findByRFIDComprehensive = async function(rfidUid) {
+  if (!rfidUid) return null;
+  
+  const normalizedUid = rfidUid.replace(/\s/g, '').toUpperCase();
+  console.log(`Comprehensive RFID search: "${normalizedUid}"`);
+  
+  let employee = await this.findOne({
+    status: 'Active',
+    isRfidAssigned: true
+  });
+  
+  if (!employee) {
+    const allEmployees = await this.find({ 
+      status: 'Active',
+      isRfidAssigned: true 
+    });
+    
+    for (const emp of allEmployees) {
+      if (emp.doesRfidMatch(normalizedUid)) {
+        employee = emp;
+        console.log(`Found employee with comprehensive matching: ${emp.employeeId}`);
+        break;
+      }
+    }
+  }
+  
+  return employee;
 };
 
 employeeSchema.statics.findByEmployeeId = function(employeeId) {
@@ -411,24 +488,47 @@ employeeSchema.statics.search = function(query) {
   });
 };
 
-// Additional pre-save middleware for enhanced functionality
+employeeSchema.statics.getAllRfidAssignments = function() {
+  return this.find({ 
+    isRfidAssigned: true,
+    status: 'Active'
+  }).select('employeeId firstName lastName rfidUid department position');
+};
+
+employeeSchema.statics.isRfidAvailable = async function(rfidUid, excludeEmployeeId = null) {
+  if (!rfidUid) return true;
+  
+  const normalizedUid = rfidUid.replace(/\s/g, '').toUpperCase();
+  
+  const query = {
+    status: 'Active',
+    isRfidAssigned: true,
+    $or: [
+      { rfidUid: { $regex: new RegExp(`^${normalizedUid}$`, 'i') } },
+      { rfidUid: { $regex: new RegExp(normalizedUid, 'i') } }
+    ]
+  };
+  
+  if (excludeEmployeeId) {
+    query.employeeId = { $ne: excludeEmployeeId };
+  }
+  
+  const existing = await this.findOne(query);
+  return !existing;
+};
+
 employeeSchema.pre('save', function(next) {
-  // Format RFID UID
-  if (this.rfidUid) {
-    this.rfidUid = this.rfidUid.replace(/\s/g, '').toUpperCase();
-    this.isRfidAssigned = true;
-  } else {
-    this.isRfidAssigned = false;
-  }
-
-  // Set last modified by
-  if (this.isModified() && !this.lastModifiedBy) {
-    this.lastModifiedBy = 'System';
-  }
-
-  // Handle same as current address
-  if (this.sameAsCurrent && this.currentAddress) {
-    this.permanentAddress = { ...this.currentAddress.toObject() };
+  if (this.rfidUid && this.isRfidAssigned) {
+    const cleanUid = this.rfidUid.replace(/\s/g, '');
+    if (cleanUid.length !== 8) {
+      const error = new Error(`RFID UID must be exactly 8 characters long. Got: ${cleanUid.length} characters`);
+      return next(error);
+    }
+    
+    if (!/^[0-9A-F]{8}$/i.test(cleanUid)) {
+      const error = new Error(`RFID UID must contain only hexadecimal characters (0-9, A-F). Got: ${cleanUid}`);
+      return next(error);
+    }
   }
 
   next();

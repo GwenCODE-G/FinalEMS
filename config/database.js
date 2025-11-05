@@ -5,19 +5,27 @@ const connectDB = async () => {
         const conn = await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/BrightonSystem', {
             useNewUrlParser: true,
             useUnifiedTopology: true,
-            serverSelectionTimeoutMS: 30000, // Increased timeout
+            serverSelectionTimeoutMS: 30000,
             socketTimeoutMS: 45000,
             maxPoolSize: 10,
             retryWrites: true,
-            w: 'majority'
+            w: 'majority',
+            dbName: 'BrightonSystem'
         });
 
         console.log(`MongoDB Connected: ${conn.connection.host}`);
-        console.log(`Database: BrightonSystem`);
+        console.log(`Database: ${conn.connection.name}`);
         
-        // Test the connection
         await mongoose.connection.db.admin().ping();
         console.log('Database ping successful');
+        
+        const collections = await mongoose.connection.db.listCollections().toArray();
+        const collectionNames = collections.map(col => col.name);
+        console.log('Available collections:', collectionNames);
+        
+        if (!collectionNames.includes('EMS_UID')) {
+            console.log('EMS_UID collection not found, it will be created automatically');
+        }
         
     } catch (error) {
         console.error('Database connection error:', error);
@@ -26,9 +34,8 @@ const connectDB = async () => {
     }
 };
 
-// MongoDB event handlers
 mongoose.connection.on('connected', () => {
-    console.log('Mongoose connected to MongoDB');
+    console.log('Mongoose connected to BrightonSystem database');
 });
 
 mongoose.connection.on('error', (err) => {

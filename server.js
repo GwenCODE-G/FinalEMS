@@ -1,47 +1,75 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const path = require('path');
 const http = require('http');
 const socketIo = require('socket.io');
+const moment = require('moment-timezone');
 require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
 
-// Enhanced CORS configuration
+moment.tz.setDefault('Asia/Manila');
+
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps, Arduino, etc.)
+    const allowedOrigins = [
+      'http://localhost:3000',
+      'https://www.brightonsjdm.com',
+      'https://brighton-sjdm-backend.vercel.app',
+      'http://192.168.100.122:5000',
+      'http://192.168.100.122:3000',
+      'http://localhost:5000'
+    ];
+    
     if (!origin) return callback(null, true);
     
-    // Allow all origins for development
-    callback(null, true);
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.log('CORS blocked origin:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
   },
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
   credentials: true,
-  optionsSuccessStatus: 200
+  optionsSuccessStatus: 200,
+  preflightContinue: false
 };
 
 app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
-// Body parser middleware
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Security headers
 app.use((req, res, next) => {
   res.header('X-Content-Type-Options', 'nosniff');
   res.header('X-Frame-Options', 'DENY');
   res.header('X-XSS-Protection', '1; mode=block');
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
   next();
 });
 
-// Socket.io configuration
 const io = socketIo(server, {
   cors: {
-    origin: "*",
+    origin: function (origin, callback) {
+      const allowedOrigins = [
+        'http://localhost:3000',
+        'https://www.brightonsjdm.com',
+        'https://brighton-sjdm-backend.vercel.app',
+        'http://192.168.100.122:5000',
+        'http://192.168.100.122:3000',
+        'http://localhost:5000'
+      ];
+      
+      if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     methods: ["GET", "POST"],
     credentials: true
   },
@@ -49,14 +77,11 @@ const io = socketIo(server, {
   pingInterval: 25000
 });
 
-// Make io accessible to routes
 app.set('io', io);
 
-// Database connection state
 let isDatabaseConnected = false;
 let databaseConnectionPromise = null;
 
-// Enhanced MongoDB connection with guaranteed connection
 const connectDB = async () => {
   if (databaseConnectionPromise) {
     return databaseConnectionPromise;
@@ -69,30 +94,31 @@ const connectDB = async () => {
     const attemptConnection = async () => {
       try {
         connectionAttempts++;
-        console.log(`🔄 Database connection attempt ${connectionAttempts}/${maxAttempts}...`);
+        console.log(`Database connection attempt ${connectionAttempts}/${maxAttempts}...`);
         
         const conn = await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/BrightonSystem', {
           serverSelectionTimeoutMS: 15000,
           socketTimeoutMS: 45000,
           maxPoolSize: 10,
           retryWrites: true,
-          w: 'majority'
+          w: 'majority',
+          dbName: 'BrightonSystem'
         });
         
         isDatabaseConnected = true;
-        console.log('✅ MongoDB Connected to BrightonSystem database');
-        console.log('📊 Database: ' + conn.connection.name);
-        console.log('🌐 Host: ' + conn.connection.host);
+        console.log('MongoDB Connected to BrightonSystem database');
+        console.log('Database: ' + conn.connection.name);
+        console.log('Host: ' + conn.connection.host);
         resolve(conn);
         
       } catch (error) {
-        console.error(`❌ Database connection attempt ${connectionAttempts} failed:`, error.message);
+        console.log(`Database connection attempt ${connectionAttempts} failed:`, error.message);
         
         if (connectionAttempts < maxAttempts) {
-          console.log(`🔄 Retrying connection in 3 seconds... (${maxAttempts - connectionAttempts} attempts remaining)`);
+          console.log(`Retrying connection in 3 seconds... (${maxAttempts - connectionAttempts} attempts remaining)`);
           setTimeout(attemptConnection, 3000);
         } else {
-          console.error('❌ All database connection attempts failed');
+          console.log('All database connection attempts failed');
           reject(error);
         }
       }
@@ -104,87 +130,163 @@ const connectDB = async () => {
   return databaseConnectionPromise;
 };
 
-// MongoDB connection event handlers
 mongoose.connection.on('connected', () => {
   isDatabaseConnected = true;
-  console.log('✅ MongoDB connection established');
+  console.log('MongoDB connection established');
 });
 
 mongoose.connection.on('error', (err) => {
   isDatabaseConnected = false;
-  console.error('❌ MongoDB connection error:', err);
+  console.log('MongoDB connection error:', err);
 });
 
 mongoose.connection.on('disconnected', () => {
   isDatabaseConnected = false;
-  console.log('⚠️ MongoDB connection disconnected');
+  console.log('MongoDB connection disconnected');
 });
 
-// Middleware to check database connection
 app.use((req, res, next) => {
   if (!isDatabaseConnected) {
+    console.log('Database not connected for request:', req.method, req.url);
     return res.status(503).json({
       success: false,
       message: 'Database is not connected. Please try again in a few moments.',
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      ph_time: getPHTimeString()
     });
   }
   next();
 });
 
-// Import routes
 const departmentRoutes = require('./routes/departments');
 const employeeRoutes = require('./routes/employees');
 const rfidRoutes = require('./routes/rfidRoutes');
 const attendanceRoutes = require('./routes/attendanceRoutes');
 
-// Use routes
 app.use('/api/departments', departmentRoutes);
 app.use('/api/employees', employeeRoutes);
 app.use('/api/rfid', rfidRoutes);
 app.use('/api/attendance', attendanceRoutes);
 
-// Helper function to get PH time
+const setupAutoTimeoutJob = require('./jobs/autoTimeoutJob');
+
+// Philippine Time Helper Functions - 12-hour AM/PM format with PST
 const getPHTime = () => {
-  const now = new Date();
-  return new Date(now.getTime() + (8 * 60 * 60 * 1000));
+  return moment().tz('Asia/Manila').toDate();
 };
 
-const formatPHTime = () => {
-  const phTime = getPHTime();
-  return phTime.toLocaleString('en-PH', { 
-    timeZone: 'UTC',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: true
-  });
+const getPHTimeString = () => {
+  return moment().tz('Asia/Manila').format('YYYY-MM-DD hh:mm:ss A') + ' PST';
 };
 
-// API test endpoint
+const getPHDateString = () => {
+  return moment().tz('Asia/Manila').format('YYYY-MM-DD');
+};
+
+const formatPHTime = (date) => {
+  return moment(date).tz('Asia/Manila').format('YYYY-MM-DD hh:mm:ss A') + ' PST';
+};
+
+const parsePHTime = (dateString, timeString) => {
+  return moment.tz(`${dateString} ${timeString}`, 'YYYY-MM-DD HH:mm:ss', 'Asia/Manila').toDate();
+};
+
+// ==================== WORKING HOURS VALIDATION ====================
+
+const WORKING_HOURS = {
+  START_HOUR: 6,   // 6:00 AM
+  START_MINUTE: 0,
+  END_HOUR: 19,    // 7:00 PM
+  END_MINUTE: 0,
+  TIMEIN_CUTOFF_HOUR: 17, // 5:00 PM
+  TIMEIN_CUTOFF_MINUTE: 0
+};
+
+const isWithinWorkingHours = (dateTime) => {
+  const phTime = moment(dateTime).tz('Asia/Manila');
+  const hour = phTime.hour();
+  const minute = phTime.minute();
+  
+  // Create time objects for comparison
+  const currentTime = moment().set({ hour, minute, second: 0 });
+  const startTime = moment().set({ hour: WORKING_HOURS.START_HOUR, minute: WORKING_HOURS.START_MINUTE, second: 0 });
+  const endTime = moment().set({ hour: WORKING_HOURS.END_HOUR, minute: WORKING_HOURS.END_MINUTE, second: 0 });
+  
+  return currentTime.isSameOrAfter(startTime) && currentTime.isBefore(endTime);
+};
+
+const isTimeInAllowed = (dateTime) => {
+  const phTime = moment(dateTime).tz('Asia/Manila');
+  const hour = phTime.hour();
+  const minute = phTime.minute();
+  
+  // Create time objects for comparison
+  const currentTime = moment().set({ hour, minute, second: 0 });
+  const startTime = moment().set({ hour: WORKING_HOURS.START_HOUR, minute: WORKING_HOURS.START_MINUTE, second: 0 });
+  const cutoffTime = moment().set({ hour: WORKING_HOURS.TIMEIN_CUTOFF_HOUR, minute: WORKING_HOURS.TIMEIN_CUTOFF_MINUTE, second: 0 });
+  
+  return currentTime.isSameOrAfter(startTime) && currentTime.isBefore(cutoffTime);
+};
+
+const isTimeOutAllowed = (dateTime) => {
+  const phTime = moment(dateTime).tz('Asia/Manila');
+  const hour = phTime.hour();
+  const minute = phTime.minute();
+  
+  // Create time objects for comparison
+  const currentTime = moment().set({ hour, minute, second: 0 });
+  const startTime = moment().set({ hour: WORKING_HOURS.START_HOUR, minute: WORKING_HOURS.START_MINUTE, second: 0 });
+  const endTime = moment().set({ hour: WORKING_HOURS.END_HOUR, minute: WORKING_HOURS.END_MINUTE, second: 0 });
+  
+  return currentTime.isSameOrAfter(startTime) && currentTime.isBefore(endTime);
+};
+
 app.get('/api/test', (req, res) => {
-  const serverUTC = new Date();
-  const phTime = getPHTime();
+  const serverTime = moment();
+  const phTime = moment().tz('Asia/Manila');
   
   res.json({
     success: true,
     message: 'Brighton EMS Backend API is working correctly',
-    timestamp: serverUTC.toISOString(),
+    timestamp: serverTime.toISOString(),
     timezone: {
-      server_utc: serverUTC.toISOString(),
-      philippines_time: phTime.toISOString(),
-      formatted_ph_time: formatPHTime()
+      server_utc: serverTime.format('YYYY-MM-DD HH:mm:ss'),
+      philippines_time_24h: phTime.format('YYYY-MM-DD HH:mm:ss'),
+      philippines_time_12h: phTime.format('YYYY-MM-DD hh:mm:ss A') + ' PST',
+      timezone: 'Asia/Manila (GMT+8)',
+      timezone_display: 'Philippine Standard Time (PST)'
     },
     database: isDatabaseConnected ? 'Connected' : 'Disconnected',
-    version: '2.8',
-    environment: process.env.NODE_ENV || 'development'
+    version: '3.2',
+    environment: process.env.NODE_ENV || 'development',
+    client_ip: req.ip || req.connection.remoteAddress,
+    working_hours: {
+      rfid_scanning: '6:00 AM - 7:00 PM EVERYDAY',
+      time_in: '6:00 AM - 5:00 PM',
+      time_out: '6:00 AM - 7:00 PM'
+    }
   });
 });
 
-// Database status endpoint
+app.get('/api/rfid/scan', (req, res) => {
+  const clientIP = req.ip || req.connection.remoteAddress;
+  console.log(`RFID Scan endpoint hit from IP: ${clientIP}`);
+  
+  res.status(200).json({
+    success: true,
+    message: 'RFID endpoint is ready',
+    timestamp: new Date().toISOString(),
+    ph_time: getPHTimeString(),
+    database: isDatabaseConnected ? 'Connected' : 'Disconnected',
+    server: 'Online',
+    working_hours: {
+      rfid_scanning: '6:00 AM - 7:00 PM EVERYDAY',
+      time_in: '6:00 AM - 5:00 PM',
+      time_out: '6:00 AM - 7:00 PM'
+    }
+  });
+});
+
 app.get('/api/database-status', async (req, res) => {
   try {
     const collections = await mongoose.connection.db.listCollections().toArray();
@@ -194,12 +296,20 @@ app.get('/api/database-status', async (req, res) => {
       database: {
         state: isDatabaseConnected ? 'Connected' : 'Disconnected',
         name: mongoose.connection.name,
-        host: mongoose.connection.host
+        host: mongoose.connection.host,
+        readyState: mongoose.connection.readyState
       },
       collections: collectionNames,
       uptime: process.uptime(),
       timestamp: new Date().toISOString(),
-      ph_time: formatPHTime()
+      ph_time: getPHTimeString(),
+      timezone: 'Asia/Manila (GMT+8)',
+      timezone_display: 'Philippine Standard Time (PST)',
+      working_hours: {
+        rfid_scanning: '6:00 AM - 7:00 PM EVERYDAY',
+        time_in: '6:00 AM - 5:00 PM',
+        time_out: '6:00 AM - 7:00 PM'
+      }
     };
     
     res.json({
@@ -207,7 +317,7 @@ app.get('/api/database-status', async (req, res) => {
       data: status
     });
   } catch (error) {
-    console.error('Database status error:', error);
+    console.log('Database status error:', error);
     res.status(500).json({
       success: false,
       message: 'Error checking database status',
@@ -216,16 +326,22 @@ app.get('/api/database-status', async (req, res) => {
   }
 });
 
-// Root endpoint
 app.get('/', (req, res) => {
   res.json({
     success: true,
     message: 'Brighton School EMS API - Attendance Management System',
-    version: '2.8',
+    version: '3.2',
     timestamp: new Date().toISOString(),
-    ph_time: formatPHTime(),
+    ph_time: getPHTimeString(),
+    timezone: 'Asia/Manila (GMT+8)',
+    timezone_display: 'Philippine Standard Time (PST)',
     environment: process.env.NODE_ENV || 'development',
     database: isDatabaseConnected ? 'Connected' : 'Disconnected',
+    working_hours: {
+      rfid_scanning: '6:00 AM - 7:00 PM EVERYDAY',
+      time_in: '6:00 AM - 5:00 PM',
+      time_out: '6:00 AM - 7:00 PM'
+    },
     endpoints: {
       employees: '/api/employees',
       departments: '/api/departments',
@@ -237,15 +353,24 @@ app.get('/', (req, res) => {
   });
 });
 
-// Health check endpoint
 app.get('/health', (req, res) => {
   const health = {
     status: isDatabaseConnected ? 'OK' : 'SERVICE_UNAVAILABLE',
     database: isDatabaseConnected ? 'Connected' : 'Disconnected',
+    database_readyState: mongoose.connection.readyState,
     timestamp: new Date().toISOString(),
-    ph_time: formatPHTime(),
+    ph_time: getPHTimeString(),
+    timezone: 'Asia/Manila (GMT+8)',
+    timezone_display: 'Philippine Standard Time (PST)',
     uptime: process.uptime(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    memory: process.memoryUsage(),
+    client_ip: req.ip || req.connection.remoteAddress,
+    working_hours: {
+      rfid_scanning: '6:00 AM - 7:00 PM EVERYDAY',
+      time_in: '6:00 AM - 5:00 PM',
+      time_out: '6:00 AM - 7:00 PM'
+    }
   };
   
   if (!isDatabaseConnected) {
@@ -258,28 +383,39 @@ app.get('/health', (req, res) => {
   res.json(health);
 });
 
-// 404 handler for API routes
 app.use('/api/*', (req, res) => {
+  console.log('API endpoint not found:', req.originalUrl);
   res.status(404).json({
     success: false,
     message: 'API endpoint not found',
-    path: req.originalUrl
+    path: req.originalUrl,
+    available_endpoints: [
+      '/api/employees',
+      '/api/departments',
+      '/api/rfid',
+      '/api/attendance',
+      '/api/test',
+      '/api/health'
+    ]
   });
 });
 
-// Global error handler
 app.use((err, req, res, next) => {
-  console.error('Global Error Handler:', err);
+  console.log('Global Error Handler:', err);
   
-  // CORS errors
   if (err.message === 'Not allowed by CORS') {
     return res.status(403).json({
       success: false,
-      message: 'CORS Error: Origin not allowed'
+      message: 'CORS Error: Origin not allowed',
+      requested_origin: req.headers.origin,
+      allowed_origins: [
+        'http://localhost:3000',
+        'https://www.brightonsjdm.com',
+        'https://brighton-sjdm-backend.vercel.app'
+      ]
     });
   }
   
-  // Mongoose validation errors
   if (err.name === 'ValidationError') {
     const errors = Object.values(err.errors).map(error => ({
       field: error.path,
@@ -293,7 +429,6 @@ app.use((err, req, res, next) => {
     });
   }
   
-  // MongoDB duplicate key errors
   if (err.code === 11000) {
     const field = Object.keys(err.keyValue)[0];
     return res.status(400).json({
@@ -303,63 +438,162 @@ app.use((err, req, res, next) => {
     });
   }
   
-  // Default error response
   res.status(err.status || 500).json({
     success: false,
-    message: err.message || 'Internal Server Error'
+    message: err.message || 'Internal Server Error',
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
   });
 });
 
-// Start server with database connection guarantee
+io.on('connection', (socket) => {
+  console.log('Client connected:', socket.id, 'from:', socket.handshake.address);
+  
+  socket.on('disconnect', (reason) => {
+    console.log('Client disconnected:', socket.id, 'Reason:', reason);
+  });
+  
+  socket.on('error', (error) => {
+    console.log('Socket error:', error);
+  });
+  
+  socket.emit('welcome', {
+    message: 'Connected to Brighton EMS Server',
+    serverTime: new Date().toISOString(),
+    phTime: getPHTimeString(),
+    timezone: 'Asia/Manila (GMT+8)',
+    timezone_display: 'Philippine Standard Time (PST)',
+    working_hours: {
+      rfid_scanning: '6:00 AM - 7:00 PM EVERYDAY',
+      time_in: '6:00 AM - 5:00 PM',
+      time_out: '6:00 AM - 7:00 PM'
+    }
+  });
+});
+
 const startServer = async () => {
   try {
-    console.log('🚀 Starting Brighton EMS Server...');
-    console.log('🔄 Establishing database connection...');
+    console.log('Starting Brighton EMS Server...');
+    console.log('Establishing database connection...');
     
-    // Wait for database connection before starting server
     await connectDB();
+    
+    setupAutoTimeoutJob();
     
     const PORT = process.env.PORT || 5000;
     
     server.listen(PORT, '0.0.0.0', () => {
       console.log('====================================');
-      console.log('✅ Brighton EMS Server Started Successfully');
+      console.log('Brighton EMS Server Started Successfully');
       console.log('====================================');
-      console.log('📍 Port: ' + PORT);
-      console.log('🌍 Environment: ' + (process.env.NODE_ENV || 'development'));
-      console.log('🗄️ Database: Connected');
-      console.log('📡 Socket.IO: Enabled');
-      console.log('⏰ Timezone: Philippine Time (GMT+8)');
+      console.log('Port: ' + PORT);
+      console.log('Environment: ' + (process.env.NODE_ENV || 'development'));
+      console.log('Database: ' + (isDatabaseConnected ? 'Connected' : 'Disconnected'));
+      console.log('Socket.IO: Enabled');
+      console.log('Auto Timeout: Enabled (7:05 PM & 8:00 PM Philippines Time)');
+      console.log('Timezone: Asia/Manila (GMT+8) - Philippine Standard Time (PST)');
+      console.log('Time Format: 12-hour AM/PM with PST');
+      console.log('Current PH Time: ' + getPHTimeString());
+      console.log('Working Hours:');
+      console.log('  - RFID Scanning: 6:00 AM - 7:00 PM EVERYDAY');
+      console.log('  - Time In: 6:00 AM - 5:00 PM');
+      console.log('  - Time Out: 6:00 AM - 7:00 PM');
+      console.log('Server URL: http://localhost:' + PORT);
+      console.log('Network URL: http://' + getLocalIP() + ':' + PORT);
       console.log('====================================');
     });
     
   } catch (error) {
-    console.error('❌ Failed to start server:', error);
+    console.log('Failed to start server:', error);
     process.exit(1);
   }
 };
 
-// Start the server
+const getLocalIP = () => {
+  const interfaces = require('os').networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const interface of interfaces[name]) {
+      if (interface.family === 'IPv4' && !interface.internal) {
+        return interface.address;
+      }
+    }
+  }
+  return 'localhost';
+};
+
 startServer();
 
-// Graceful shutdown
 process.on('SIGINT', async () => {
-  console.log('🛑 Received SIGINT. Shutting down gracefully...');
+  console.log('Received SIGINT. Shutting down gracefully...');
   
   try {
     io.disconnectSockets(true);
-    console.log('✅ Socket.io connections closed');
+    console.log('Socket.io connections closed');
     
     await mongoose.connection.close();
-    console.log('✅ MongoDB connection closed');
+    console.log('MongoDB connection closed');
     
     server.close(() => {
-      console.log('✅ HTTP server closed');
+      console.log('HTTP server closed');
+      console.log('Server shutdown complete');
       process.exit(0);
     });
     
+    setTimeout(() => {
+      console.log('Forcing shutdown after timeout');
+      process.exit(1);
+    }, 10000);
+    
   } catch (error) {
-    console.error('❌ Error during shutdown:', error);
+    console.log('Error during shutdown:', error);
     process.exit(1);
   }
 });
+
+process.on('SIGTERM', async () => {
+  console.log('Received SIGTERM. Shutting down gracefully...');
+  
+  try {
+    io.disconnectSockets(true);
+    console.log('Socket.io connections closed');
+    
+    await mongoose.connection.close();
+    console.log('MongoDB connection closed');
+    
+    server.close(() => {
+      console.log('HTTP server closed');
+      console.log('Server shutdown complete');
+      process.exit(0);
+    });
+    
+    setTimeout(() => {
+      console.log('Forcing shutdown after timeout');
+      process.exit(1);
+    }, 10000);
+    
+  } catch (error) {
+    console.log('Error during shutdown:', error);
+    process.exit(1);
+  }
+});
+
+process.on('uncaughtException', (error) => {
+  console.log('Uncaught Exception:', error);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.log('Unhandled Rejection at:', promise, 'reason:', reason);
+  process.exit(1);
+});
+
+module.exports = {
+  getPHTime,
+  getPHTimeString,
+  getPHDateString,
+  formatPHTime,
+  parsePHTime,
+  isWithinWorkingHours,
+  isTimeInAllowed,
+  isTimeOutAllowed,
+  WORKING_HOURS
+};

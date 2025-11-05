@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
-  FaTimes, FaClock, FaUserTimes, FaChartBar, FaExclamationTriangle, 
-  FaCalendar, FaUserClock, FaHistory, FaCheck, FaTimes as FaTimesIcon 
+  FaTimes, FaClock, FaChartBar, FaExclamationTriangle, 
+  FaCalendar, FaCheck, FaTimes as FaTimesIcon 
 } from 'react-icons/fa';
 import axios from 'axios';
 
@@ -13,14 +13,13 @@ const SummaryModal = ({
 }) => {
   const [attendanceHistory, setAttendanceHistory] = useState([]);
   const [allWorkDays, setAllWorkDays] = useState([]);
-  const [selectedHistoryDate, setSelectedHistoryDate] = useState('');
   const [apiBaseUrl, setApiBaseUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [realTimeSummary, setRealTimeSummary] = useState(null);
   const [refreshCount, setRefreshCount] = useState(0);
-  const [activeTab, setActiveTab] = useState('summary'); // 'summary', 'details', 'calendar'
+  const [activeTab, setActiveTab] = useState('summary');
+  const [employeeLeaves, setEmployeeLeaves] = useState([]);
 
-  // Calculate all work days from employment date to today
   const calculateAllWorkDays = useCallback((employmentDate) => {
     if (!employmentDate) return [];
     
@@ -28,7 +27,6 @@ const SummaryModal = ({
     const endDate = new Date();
     const workDays = [];
     
-    // Reset times for proper date comparison
     startDate.setHours(0, 0, 0, 0);
     endDate.setHours(0, 0, 0, 0);
     
@@ -36,7 +34,6 @@ const SummaryModal = ({
     
     while (currentDate <= endDate) {
       const dayOfWeek = currentDate.getDay();
-      // Only count weekdays (Monday to Friday)
       if (dayOfWeek >= 1 && dayOfWeek <= 5) {
         workDays.push(new Date(currentDate));
       }
@@ -46,7 +43,6 @@ const SummaryModal = ({
     return workDays;
   }, []);
 
-  // Fetch real-time summary data
   const fetchRealTimeSummary = useCallback(async () => {
     if (!monthlySummary || !apiBaseUrl) return;
 
@@ -59,29 +55,22 @@ const SummaryModal = ({
       
       if (response.data.success) {
         setRealTimeSummary(response.data.data);
-        console.log('Real-time summary loaded:', response.data.data);
       }
     } catch (error) {
-      console.error('Error fetching real-time summary:', error);
-      // Fallback to monthly summary if real-time fails
       setRealTimeSummary(monthlySummary);
     } finally {
       setLoading(false);
     }
   }, [monthlySummary, apiBaseUrl]);
 
-  // Fetch complete attendance history
   const fetchAttendanceHistory = useCallback(async () => {
     if (!monthlySummary || !apiBaseUrl) return;
 
     setLoading(true);
     try {
-      // Use employment date as start date
       const employmentDate = new Date(monthlySummary.employmentDate || monthlySummary.employee.dateEmployed);
       const startDate = employmentDate;
       const endDate = new Date();
-      
-      console.log('Fetching complete attendance history from employment:', startDate);
       
       const response = await axios.get(
         `${apiBaseUrl}/api/attendance/employee/${monthlySummary.employee.employeeId}?startDate=${startDate.toISOString().split('T')[0]}&endDate=${endDate.toISOString().split('T')[0]}&limit=2000`,
@@ -92,18 +81,13 @@ const SummaryModal = ({
         const history = response.data.data || [];
         setAttendanceHistory(history);
         
-        // Calculate all work days
         const workDays = calculateAllWorkDays(employmentDate);
         setAllWorkDays(workDays);
-        
-        console.log('Complete history loaded:', history.length, 'records');
-        console.log('Total work days calculated:', workDays.length);
       } else {
         setAttendanceHistory([]);
         setAllWorkDays([]);
       }
     } catch (error) {
-      console.error('Error fetching attendance history:', error);
       setAttendanceHistory([]);
       setAllWorkDays([]);
     } finally {
@@ -111,21 +95,37 @@ const SummaryModal = ({
     }
   }, [monthlySummary, apiBaseUrl, calculateAllWorkDays]);
 
-  // Enhanced data fetching
+  const fetchEmployeeLeaves = useCallback(async () => {
+    if (!monthlySummary || !apiBaseUrl) return;
+
+    try {
+      const response = await axios.get(
+        `${apiBaseUrl}/api/attendance/leaves/${monthlySummary.employee.employeeId}`,
+        { timeout: 10000 }
+      );
+      
+      if (response.data.success) {
+        setEmployeeLeaves(response.data.data || []);
+      }
+    } catch (error) {
+      setEmployeeLeaves([]);
+    }
+  }, [monthlySummary, apiBaseUrl]);
+
   const fetchCompleteData = useCallback(async () => {
     if (!monthlySummary || !apiBaseUrl) return;
 
     try {
       await Promise.all([
         fetchRealTimeSummary(),
-        fetchAttendanceHistory()
+        fetchAttendanceHistory(),
+        fetchEmployeeLeaves()
       ]);
     } catch (error) {
       console.error('Error fetching complete data:', error);
     }
-  }, [monthlySummary, apiBaseUrl, fetchRealTimeSummary, fetchAttendanceHistory]);
+  }, [monthlySummary, apiBaseUrl, fetchRealTimeSummary, fetchAttendanceHistory, fetchEmployeeLeaves]);
 
-  // Find working backend
   useEffect(() => {
     const findWorkingBackend = async () => {
       const PORTS_TO_TRY = [5000, 5001, 3001, 3000, 8080];
@@ -144,12 +144,10 @@ const SummaryModal = ({
     findWorkingBackend();
   }, []);
 
-  // Fetch data when modal opens
   useEffect(() => {
     if (isOpen && monthlySummary && apiBaseUrl) {
       fetchCompleteData();
       
-      // Refresh data every 30 seconds for real-time updates
       const interval = setInterval(() => {
         setRefreshCount(prev => prev + 1);
       }, 30000);
@@ -158,14 +156,12 @@ const SummaryModal = ({
     }
   }, [isOpen, monthlySummary, apiBaseUrl, fetchCompleteData]);
 
-  // Refresh data periodically
   useEffect(() => {
     if (isOpen && monthlySummary && apiBaseUrl && refreshCount > 0) {
       fetchCompleteData();
     }
   }, [refreshCount, isOpen, monthlySummary, apiBaseUrl, fetchCompleteData]);
 
-  // Formatting functions
   const formatTotalHours = (totalHours) => {
     if (typeof totalHours === 'string') return totalHours;
     if (!totalHours) return '0h 0m';
@@ -175,17 +171,17 @@ const SummaryModal = ({
   };
 
   const formatTime = (timeString) => {
-    if (!timeString) return '-';
+    if (!timeString) return 'Pending';
     try {
       const date = new Date(timeString);
-      if (isNaN(date.getTime())) return '-';
+      if (isNaN(date.getTime())) return 'Pending';
       return date.toLocaleTimeString('en-US', { 
         hour12: true, 
         hour: '2-digit', 
         minute: '2-digit'
       });
     } catch (error) {
-      return '-';
+      return 'Pending';
     }
   };
 
@@ -210,57 +206,71 @@ const SummaryModal = ({
       const date = new Date(dateString);
       return date.toLocaleDateString('en-US', {
         month: 'short',
-        day: 'numeric'
+        day: 'numeric',
+        year: 'numeric'
       });
     } catch (error) {
       return '-';
     }
   };
 
-  // Get attendance status for a specific date
+  const isOnLeave = (date) => {
+    const checkDate = new Date(date);
+    return employeeLeaves.some(leave => {
+      const startDate = new Date(leave.startDate);
+      const endDate = new Date(leave.endDate);
+      return checkDate >= startDate && checkDate <= endDate;
+    });
+  };
+
   const getAttendanceForDate = (date) => {
     const dateStr = date.toISOString().split('T')[0];
     return attendanceHistory.find(record => record.date === dateStr);
   };
 
-  // Calculate comprehensive statistics
   const getComprehensiveStats = () => {
-    const presentDays = attendanceHistory.filter(record => record.timeIn).length;
-    const completedShifts = attendanceHistory.filter(record => record.timeOut).length;
-    const lateDays = attendanceHistory.filter(record => record.status === 'Late').length;
+    const presentDays = attendanceHistory.filter(record => 
+      record.timeIn && record.status !== 'No Work' && !isOnLeave(record.date)
+    ).length;
+    
+    const lateDays = attendanceHistory.filter(record => 
+      record.status === 'Late' && !isOnLeave(record.date)
+    ).length;
+    
+    const noWorkDays = attendanceHistory.filter(record => 
+      record.status === 'No Work'
+    ).length;
+    
+    const leaveDays = employeeLeaves.reduce((total, leave) => {
+      const start = new Date(leave.startDate);
+      const end = new Date(leave.endDate);
+      let days = 0;
+      for (let date = new Date(start); date <= end; date.setDate(date.getDate() + 1)) {
+        if (date <= new Date()) days++;
+      }
+      return total + days;
+    }, 0);
+    
     const totalWorkDays = allWorkDays.length;
-    const absentDays = Math.max(0, totalWorkDays - presentDays);
+    const absentDays = Math.max(0, totalWorkDays - presentDays - noWorkDays - leaveDays);
     
-    // Calculate total hours from actual attendance records
-    const totalMinutes = attendanceHistory.reduce((sum, record) => sum + (record.totalMinutes || 0), 0);
+    const totalMinutes = attendanceHistory.reduce((sum, record) => {
+      if (record.status === 'No Work' || isOnLeave(record.date)) return sum;
+      return sum + (record.totalMinutes || 0);
+    }, 0);
+    
     const totalHours = totalMinutes / 60;
-    const averageHours = presentDays > 0 ? totalHours / presentDays : 0;
-    
-    const attendanceRate = totalWorkDays > 0 ? (presentDays / totalWorkDays) * 100 : 0;
     
     return {
       presentDays,
       absentDays,
+      noWorkDays,
+      leaveDays,
       totalWorkDays,
-      completedShifts,
       lateDays,
       totalHours,
-      totalMinutes,
-      averageHours,
-      attendanceRate,
-      completionRate: presentDays > 0 ? (completedShifts / presentDays) * 100 : 0
+      totalMinutes
     };
-  };
-
-  // Get filtered history for details tab
-  const getFilteredHistory = () => {
-    if (!selectedHistoryDate) return attendanceHistory;
-    return attendanceHistory.filter(record => record.date === selectedHistoryDate);
-  };
-
-  const getAvailableDates = () => {
-    const dates = [...new Set(attendanceHistory.map(record => record.date))].sort().reverse();
-    return dates;
   };
 
   const getEmploymentPeriodText = () => {
@@ -269,7 +279,211 @@ const SummaryModal = ({
     return `${formatDate(employmentDate)} - Present`;
   };
 
-  // Use real-time summary if available, otherwise fallback to monthly summary
+  const calculateLateMinutes = (attendanceRecord, employee) => {
+    if (!attendanceRecord || !attendanceRecord.timeIn || !employee || !employee.workSchedule) return 0;
+    
+    try {
+      const timeIn = new Date(attendanceRecord.timeIn);
+      const dayOfWeek = timeIn.toLocaleDateString('en-US', { weekday: 'long' });
+      const schedule = employee.workSchedule[dayOfWeek];
+      
+      if (!schedule || !schedule.active || !schedule.start) return 0;
+      
+      const [scheduledHour, scheduledMinute] = schedule.start.split(':').map(Number);
+      const scheduledTime = new Date(timeIn);
+      scheduledTime.setHours(scheduledHour, scheduledMinute, 0, 0);
+      
+      if (timeIn > scheduledTime) {
+        return Math.floor((timeIn - scheduledTime) / (1000 * 60));
+      }
+      
+      return 0;
+    } catch (error) {
+      return 0;
+    }
+  };
+
+  const calculateOvertimeMinutes = (attendanceRecord, employee) => {
+    if (!attendanceRecord || !attendanceRecord.timeOut || !employee || !employee.workSchedule) return 0;
+    
+    try {
+      const timeOut = new Date(attendanceRecord.timeOut);
+      const dayOfWeek = timeOut.toLocaleDateString('en-US', { weekday: 'long' });
+      const schedule = employee.workSchedule[dayOfWeek];
+      
+      if (!schedule || !schedule.active || !schedule.end) return 0;
+      
+      const [scheduledHour, scheduledMinute] = schedule.end.split(':').map(Number);
+      const scheduledEndTime = new Date(timeOut);
+      scheduledEndTime.setHours(scheduledHour, scheduledMinute, 0, 0);
+      
+      if (timeOut > scheduledEndTime) {
+        return Math.floor((timeOut - scheduledEndTime) / (1000 * 60));
+      }
+      
+      return 0;
+    } catch (error) {
+      return 0;
+    }
+  };
+
+  const formatLateTime = (minutes) => {
+    if (minutes === 0) return 'No Late';
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    const secs = 0;
+    return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const formatOvertimeTime = (minutes) => {
+    if (minutes === 0) return 'No Overtime';
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    const secs = 0;
+    return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const formatHoursWorked = (attendanceRecord) => {
+    if (!attendanceRecord || !attendanceRecord.timeIn || !attendanceRecord.timeOut) {
+      return 'Pending';
+    }
+    
+    if (attendanceRecord.hoursWorked && attendanceRecord.hoursWorked !== '0h 0m') {
+      const [hours, minutes] = attendanceRecord.hoursWorked.split('h ');
+      const mins = minutes.replace('m', '');
+      return `${hours.padStart(2, '0')}:${mins.padStart(2, '0')}:00`;
+    }
+    
+    if (attendanceRecord.totalMinutes) {
+      const hours = Math.floor(attendanceRecord.totalMinutes / 60);
+      const minutes = attendanceRecord.totalMinutes % 60;
+      return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:00`;
+    }
+    
+    return 'Pending';
+  };
+
+  const getDayStatus = (workDay, attendance, isLeaveDay, isNoWorkDay) => {
+    const today = new Date();
+    const isToday = workDay.toDateString() === today.toDateString();
+    const isPastDay = workDay < today;
+    const isFutureDay = workDay > today;
+    
+    if (isLeaveDay) {
+      return {
+        timeIn: 'In_Leave',
+        timeOut: 'In_Leave',
+        status: 'In_Leave',
+        late: 'In_Leave',
+        overtime: 'In_Leave',
+        hours: 'In_Leave',
+        color: 'bg-red-100 text-red-800'
+      };
+    }
+    
+    if (isNoWorkDay) {
+      return {
+        timeIn: 'No Work Today',
+        timeOut: 'No Work Today',
+        status: 'No Work',
+        late: 'No Work Today',
+        overtime: 'No Work Today',
+        hours: 'No Work Today',
+        color: 'bg-gray-100 text-gray-800'
+      };
+    }
+    
+    if (attendance) {
+      const lateMinutes = calculateLateMinutes(attendance, summaryData.employee);
+      const overtimeMinutes = calculateOvertimeMinutes(attendance, summaryData.employee);
+      
+      let status = attendance.status;
+      let color = 'bg-green-100 text-green-800';
+      
+      if (status === 'Late') {
+        color = 'bg-yellow-100 text-yellow-800';
+      } else if (status === 'Completed') {
+        color = 'bg-blue-100 text-blue-800';
+      } else if (status === 'Absent') {
+        color = 'bg-red-100 text-red-800';
+      }
+      
+      return {
+        timeIn: attendance.timeIn ? formatTime(attendance.timeIn) : 'Pending',
+        timeOut: attendance.timeOut ? formatTime(attendance.timeOut) : 'Pending',
+        status: status,
+        late: formatLateTime(lateMinutes),
+        overtime: formatOvertimeTime(overtimeMinutes),
+        hours: formatHoursWorked(attendance),
+        color: color
+      };
+    }
+    
+    // No attendance record exists
+    if (isFutureDay) {
+      return {
+        timeIn: 'Pending',
+        timeOut: 'Pending',
+        status: 'Pending',
+        late: 'Pending',
+        overtime: 'Pending',
+        hours: 'Pending',
+        color: 'bg-gray-100 text-gray-800'
+      };
+    }
+    
+    if (isToday) {
+      const now = new Date();
+      const endOfWorkDay = new Date(workDay);
+      endOfWorkDay.setHours(17, 0, 0, 0); // 5:00 PM
+      
+      if (now > endOfWorkDay) {
+        return {
+          timeIn: 'Absent',
+          timeOut: 'Absent',
+          status: 'Absent',
+          late: 'Absent',
+          overtime: 'Absent',
+          hours: 'Absent',
+          color: 'bg-red-100 text-red-800'
+        };
+      } else {
+        return {
+          timeIn: 'Pending',
+          timeOut: 'Pending',
+          status: 'Pending',
+          late: 'Pending',
+          overtime: 'Pending',
+          hours: 'Pending',
+          color: 'bg-gray-100 text-gray-800'
+        };
+      }
+    }
+    
+    // Past day with no attendance record
+    if (isPastDay) {
+      return {
+        timeIn: 'Absent',
+        timeOut: 'Absent',
+        status: 'Absent',
+        late: 'Absent',
+        overtime: 'Absent',
+        hours: 'Absent',
+        color: 'bg-red-100 text-red-800'
+      };
+    }
+    
+    return {
+      timeIn: 'Pending',
+      timeOut: 'Pending',
+      status: 'Pending',
+      late: 'Pending',
+      overtime: 'Pending',
+      hours: 'Pending',
+      color: 'bg-gray-100 text-gray-800'
+    };
+  };
+
   const summaryData = realTimeSummary || monthlySummary;
   const stats = getComprehensiveStats();
 
@@ -308,7 +522,6 @@ const SummaryModal = ({
           </button>
         </div>
 
-        {/* Tab Navigation */}
         <div className="flex border-b mb-6">
           <button
             className={`px-4 py-2 font-medium ${
@@ -320,17 +533,6 @@ const SummaryModal = ({
           >
             <FaChartBar className="inline mr-2" />
             Summary Overview
-          </button>
-          <button
-            className={`px-4 py-2 font-medium ${
-              activeTab === 'details' 
-                ? 'border-b-2 border-[#400504] text-[#400504]' 
-                : 'text-gray-500 hover:text-gray-700'
-            }`}
-            onClick={() => setActiveTab('details')}
-          >
-            <FaHistory className="inline mr-2" />
-            Detailed Records
           </button>
           <button
             className={`px-4 py-2 font-medium ${
@@ -347,7 +549,6 @@ const SummaryModal = ({
         
         {activeTab === 'summary' && (
           <>
-            {/* Summary Cards */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
               <div className="bg-green-100 p-4 rounded-lg text-center border border-green-200">
                 <FaCheck className="text-2xl text-green-600 mx-auto mb-2" />
@@ -370,7 +571,7 @@ const SummaryModal = ({
                 <div className="text-2xl font-bold text-blue-600">{formatTotalHours(stats.totalHours)}</div>
                 <div className="text-blue-800 text-sm">Total Hours</div>
                 <div className="text-xs text-blue-600 mt-1">
-                  {stats.completedShifts} completed shifts
+                  {stats.presentDays} present days
                 </div>
               </div>
               <div className="bg-yellow-100 p-4 rounded-lg text-center border border-yellow-200">
@@ -383,7 +584,6 @@ const SummaryModal = ({
               </div>
             </div>
 
-            {/* Comprehensive Summary Information */}
             <div className="bg-gray-50 p-4 rounded-lg mb-6">
               <h4 className="font-semibold mb-3 text-[#400504] flex items-center">
                 <FaCalendar className="mr-2" />
@@ -400,181 +600,23 @@ const SummaryModal = ({
                   <strong>Absent Days:</strong> {stats.absentDays}
                 </div>
                 <div className="bg-white p-3 rounded border">
-                  <strong>Attendance Rate:</strong> {stats.attendanceRate.toFixed(1)}%
+                  <strong>No Work Days:</strong> {stats.noWorkDays}
                 </div>
                 <div className="bg-white p-3 rounded border">
-                  <strong>Completed Shifts:</strong> {stats.completedShifts}
+                  <strong>Leave Days:</strong> {stats.leaveDays}
                 </div>
                 <div className="bg-white p-3 rounded border">
-                  <strong>Shift Completion:</strong> {stats.completionRate.toFixed(1)}%
+                  <strong>Late Days:</strong> {stats.lateDays}
                 </div>
                 <div className="bg-white p-3 rounded border">
-                  <strong>Average Hours/Day:</strong> {formatTotalHours(stats.averageHours)}
+                  <strong>Total Hours:</strong> {formatTotalHours(stats.totalHours)}
                 </div>
                 <div className="bg-white p-3 rounded border">
-                  <strong>Total Hours Worked:</strong> {formatTotalHours(stats.totalHours)}
-                </div>
-              </div>
-            </div>
-
-            {/* Performance Metrics */}
-            <div className="bg-blue-50 p-4 rounded-lg">
-              <h4 className="font-semibold mb-3 text-[#400504] flex items-center">
-                <FaUserClock className="mr-2" />
-                Performance Metrics
-              </h4>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
-                <div className="bg-white p-3 rounded border text-center">
-                  <div className="text-lg font-bold text-blue-600">
-                    {stats.attendanceRate.toFixed(1)}%
-                  </div>
-                  <div className="text-blue-800">Attendance Rate</div>
-                </div>
-                <div className="bg-white p-3 rounded border text-center">
-                  <div className="text-lg font-bold text-green-600">
-                    {stats.completionRate.toFixed(1)}%
-                  </div>
-                  <div className="text-green-800">Shift Completion</div>
-                </div>
-                <div className="bg-white p-3 rounded border text-center">
-                  <div className="text-lg font-bold text-purple-600">
-                    {stats.presentDays > 0 ? ((stats.lateDays / stats.presentDays) * 100).toFixed(1) : 0}%
-                  </div>
-                  <div className="text-purple-800">Late Frequency</div>
-                </div>
-                <div className="bg-white p-3 rounded border text-center">
-                  <div className="text-lg font-bold text-orange-600">
-                    {formatTotalHours(stats.averageHours)}
-                  </div>
-                  <div className="text-orange-800">Avg Hours/Day</div>
+                  <strong>Attendance Rate:</strong> {stats.totalWorkDays > 0 ? ((stats.presentDays / stats.totalWorkDays) * 100).toFixed(1) : 0}%
                 </div>
               </div>
             </div>
           </>
-        )}
-
-        {activeTab === 'details' && (
-          <div className="bg-yellow-50 p-4 rounded-lg">
-            <div className="flex justify-between items-center mb-3">
-              <h4 className="font-semibold text-[#400504] flex items-center">
-                <FaHistory className="mr-2" />
-                Detailed Attendance Records ({getEmploymentPeriodText()})
-              </h4>
-              {loading && (
-                <div className="text-sm text-blue-600 flex items-center">
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
-                  Loading...
-                </div>
-              )}
-            </div>
-            
-            {/* Filter and Stats */}
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4">
-              <div className="flex-1">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Filter by Date
-                </label>
-                <select
-                  value={selectedHistoryDate}
-                  onChange={(e) => setSelectedHistoryDate(e.target.value)}
-                  className="w-full md:w-64 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#400504] text-sm"
-                >
-                  <option value="">All Dates ({attendanceHistory.length} records)</option>
-                  {getAvailableDates().map(date => (
-                    <option key={date} value={date}>
-                      {formatDate(date)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              
-              <div className="bg-white p-3 rounded border text-sm">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                  <div>Total: <strong>{attendanceHistory.length}</strong></div>
-                  <div>Present: <strong>{stats.presentDays}</strong></div>
-                  <div>Absent: <strong>{stats.absentDays}</strong></div>
-                  <div>Work Days: <strong>{stats.totalWorkDays}</strong></div>
-                </div>
-              </div>
-            </div>
-
-            {/* Attendance Table */}
-            <div className="overflow-x-auto max-h-96">
-              <table className="min-w-full table-auto bg-white rounded-lg">
-                <thead className="bg-gray-100 sticky top-0">
-                  <tr>
-                    <th className="px-4 py-2 text-left text-xs font-medium">Date</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium">Day</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium">Time In</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium">Time Out</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium">Hours</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium">Status</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium">Late</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium">Overtime</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {getFilteredHistory().length > 0 ? (
-                    getFilteredHistory()
-                      .sort((a, b) => new Date(b.date) - new Date(a.date))
-                      .map((record) => (
-                        <tr key={record._id} className="border-b hover:bg-gray-50 transition-colors">
-                          <td className="px-4 py-2 text-sm">
-                            {formatDate(record.date)}
-                          </td>
-                          <td className="px-4 py-2 text-sm text-gray-500">
-                            {new Date(record.date).toLocaleDateString('en-US', { weekday: 'short' })}
-                          </td>
-                          <td className="px-4 py-2 text-sm">
-                            {record.displayTimeIn || formatTime(record.timeIn)}
-                          </td>
-                          <td className="px-4 py-2 text-sm">
-                            {record.displayTimeOut || formatTime(record.timeOut)}
-                          </td>
-                          <td className="px-4 py-2 text-sm text-center">{record.hoursWorked || '-'}</td>
-                          <td className="px-4 py-2">
-                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs ${
-                              record.status === 'Present' ? 'bg-green-100 text-green-800' :
-                              record.status === 'Late' ? 'bg-yellow-100 text-yellow-800' :
-                              record.status === 'Completed' ? 'bg-blue-100 text-blue-800' :
-                              'bg-red-100 text-red-800'
-                            }`}>
-                              {record.status}
-                            </span>
-                          </td>
-                          <td className="px-4 py-2 text-sm text-center">{record.lateMinutes || 0}m</td>
-                          <td className="px-4 py-2 text-sm text-center">{record.overtimeMinutes || 0}m</td>
-                        </tr>
-                      ))
-                  ) : (
-                    <tr>
-                      <td colSpan="8" className="px-4 py-8 text-center text-gray-500">
-                        {loading ? (
-                          <div className="flex items-center justify-center">
-                            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-[#400504] mr-2"></div>
-                            Loading attendance records...
-                          </div>
-                        ) : (
-                          'No attendance records found for the selected period.'
-                        )}
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-            
-            {/* Table Footer */}
-            <div className="mt-3 text-sm text-gray-600 flex justify-between items-center">
-              <div>
-                Showing {getFilteredHistory().length} of {attendanceHistory.length} total records
-                {selectedHistoryDate && ` for ${formatDate(selectedHistoryDate)}`}
-              </div>
-              <div className="text-blue-600">
-                Records from: {getEmploymentPeriodText()}
-              </div>
-            </div>
-          </div>
         )}
 
         {activeTab === 'calendar' && (
@@ -589,7 +631,6 @@ const SummaryModal = ({
               )}
             </div>
             
-            {/* Calendar Legend */}
             <div className="flex flex-wrap gap-4 mb-4 text-xs">
               <div className="flex items-center">
                 <div className="w-3 h-3 bg-green-500 rounded mr-1"></div>
@@ -609,80 +650,78 @@ const SummaryModal = ({
               </div>
               <div className="flex items-center">
                 <div className="w-3 h-3 bg-gray-300 rounded mr-1"></div>
-                <span>Weekend/Holiday</span>
+                <span>No Work</span>
+              </div>
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-red-400 rounded mr-1"></div>
+                <span>In Leave</span>
+              </div>
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-gray-400 rounded mr-1"></div>
+                <span>Pending</span>
               </div>
             </div>
 
-            {/* Calendar View */}
             <div className="overflow-x-auto max-h-96">
               <table className="min-w-full table-auto bg-white rounded-lg">
                 <thead className="bg-gray-100 sticky top-0">
                   <tr>
                     <th className="px-3 py-2 text-left text-xs font-medium">Date</th>
                     <th className="px-3 py-2 text-left text-xs font-medium">Day</th>
-                    <th className="px-3 py-2 text-left text-xs font-medium">Status</th>
                     <th className="px-3 py-2 text-left text-xs font-medium">Time In</th>
                     <th className="px-3 py-2 text-left text-xs font-medium">Time Out</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium">Status</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium">Late</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium">Overtime</th>
                     <th className="px-3 py-2 text-left text-xs font-medium">Hours</th>
                   </tr>
                 </thead>
                 <tbody>
                   {allWorkDays.length > 0 ? (
                     allWorkDays
-                      .sort((a, b) => b - a) // Most recent first
+                      .sort((a, b) => b - a)
                       .map((workDay) => {
                         const dateStr = workDay.toISOString().split('T')[0];
                         const attendance = getAttendanceForDate(workDay);
-                        const isWeekend = workDay.getDay() === 0 || workDay.getDay() === 6;
+                        const isLeaveDay = isOnLeave(dateStr);
+                        const isNoWorkDay = attendance && attendance.status === 'No Work';
                         
-                        let status = 'Absent';
-                        let statusColor = 'bg-red-100 text-red-800';
-                        let timeIn = '-';
-                        let timeOut = '-';
-                        let hours = '-';
-                        
-                        if (attendance) {
-                          if (attendance.status === 'Completed') {
-                            status = 'Completed';
-                            statusColor = 'bg-blue-100 text-blue-800';
-                          } else if (attendance.status === 'Late') {
-                            status = 'Late';
-                            statusColor = 'bg-yellow-100 text-yellow-800';
-                          } else if (attendance.status === 'Present') {
-                            status = 'Present';
-                            statusColor = 'bg-green-100 text-green-800';
-                          }
-                          
-                          timeIn = attendance.displayTimeIn || formatTime(attendance.timeIn);
-                          timeOut = attendance.displayTimeOut || formatTime(attendance.timeOut);
-                          hours = attendance.hoursWorked || '-';
-                        }
-                        
-                        if (isWeekend) {
-                          status = 'Weekend';
-                          statusColor = 'bg-gray-100 text-gray-800';
-                        }
+                        const dayStatus = getDayStatus(workDay, attendance, isLeaveDay, isNoWorkDay);
                         
                         return (
                           <tr key={dateStr} className="border-b hover:bg-gray-50 transition-colors">
-                            <td className="px-3 py-2 text-sm">{formatDateShort(dateStr)}</td>
+                            <td className="px-3 py-2 text-sm font-medium">
+                              {formatDateShort(dateStr)}
+                            </td>
                             <td className="px-3 py-2 text-sm text-gray-500">
-                              {workDay.toLocaleDateString('en-US', { weekday: 'short' })}
+                              {workDay.toLocaleDateString('en-US', { weekday: 'long' })}
+                            </td>
+                            <td className="px-3 py-2 text-sm">
+                              {dayStatus.timeIn}
+                            </td>
+                            <td className="px-3 py-2 text-sm">
+                              {dayStatus.timeOut}
                             </td>
                             <td className="px-3 py-2">
-                              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs ${statusColor}`}>
-                                {status}
+                              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs ${dayStatus.color}`}>
+                                {dayStatus.status}
                               </span>
                             </td>
-                            <td className="px-3 py-2 text-sm">{timeIn}</td>
-                            <td className="px-3 py-2 text-sm">{timeOut}</td>
-                            <td className="px-3 py-2 text-sm text-center">{hours}</td>
+                            <td className="px-3 py-2 text-sm text-center font-mono">
+                              {dayStatus.late}
+                            </td>
+                            <td className="px-3 py-2 text-sm text-center font-mono">
+                              {dayStatus.overtime}
+                            </td>
+                            <td className="px-3 py-2 text-sm text-center font-mono">
+                              {dayStatus.hours}
+                            </td>
                           </tr>
                         );
                       })
                   ) : (
                     <tr>
-                      <td colSpan="6" className="px-4 py-8 text-center text-gray-500">
+                      <td colSpan="8" className="px-4 py-8 text-center text-gray-500">
                         {loading ? 'Loading calendar data...' : 'No work days calculated.'}
                       </td>
                     </tr>
@@ -691,13 +730,13 @@ const SummaryModal = ({
               </table>
             </div>
             
-            {/* Calendar Summary */}
             <div className="mt-3 text-sm text-gray-600 flex justify-between items-center">
               <div>
                 Showing {allWorkDays.length} work days • 
                 Present: {stats.presentDays} • 
                 Absent: {stats.absentDays} • 
-                Rate: {stats.attendanceRate.toFixed(1)}%
+                No Work: {stats.noWorkDays} • 
+                In Leave: {stats.leaveDays}
               </div>
             </div>
           </div>

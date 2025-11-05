@@ -1,3 +1,4 @@
+// frontend/src/components_ems/AddEmp/AddEmp.js - COMPLETE FIXED CODE
 import React, { useState, useEffect, useCallback } from 'react';
 import BasicInfo from './BasicInfo';
 import ContactInfo from './ContactInfo';
@@ -11,9 +12,12 @@ const AddEmp = ({ onCancel, onEmployeeAdded }) => {
     firstName: '',
     middleName: '',
     lastName: '',
+    suffix: '',
     gender: '',
     civilStatus: '',
+    religion: '',
     birthday: '',
+    birthplace: '',
     age: '',
     contactNumber: '',
     email: '',
@@ -31,6 +35,8 @@ const AddEmp = ({ onCancel, onEmployeeAdded }) => {
     },
     currentAddress: {
       blkLt: '',
+      block: '',
+      lot: '',
       street: '',
       area: '',
       barangay: '',
@@ -41,6 +47,8 @@ const AddEmp = ({ onCancel, onEmployeeAdded }) => {
     },
     permanentAddress: {
       blkLt: '',
+      block: '',
+      lot: '',
       street: '',
       area: '',
       barangay: '',
@@ -65,71 +73,19 @@ const AddEmp = ({ onCancel, onEmployeeAdded }) => {
     },
     dateStart: '',
     dateSeparated: '',
-    // Add all requirement categories with proper structure - ALL CHOICES WORK
     requirements: {
-      tinRequirements: {
-        presentForm: false,
-        submitCopy: false,
-        notYetSubmitted: true
-      },
-      sssRequirements: {
-        presentForm: false,
-        presentID: false,
-        submitCopy: false,
-        notYetSubmitted: true
-      },
-      philhealthRequirements: {
-        presentMDR: false,
-        presentID: false,
-        submitCopy: false,
-        notYetSubmitted: true
-      },
-      pagibigRequirements: {
-        presentMDF: false,
-        presentID: false,
-        submitCopy: false,
-        notYetSubmitted: true
-      },
-      healthCardRequirements: {
-        presentOriginal: false,
-        submitCopy: false,
-        notYetSubmitted: true
-      },
-      professionalIDRequirements: {
-        presentOriginal: false,
-        submitCopy: false,
-        notYetSubmitted: true
-      },
-      driversLicenseRequirements: {
-        presentOriginal: false,
-        submitCopy: false,
-        notYetSubmitted: true
-      },
-      barangayWorkingPermitRequirements: {
-        submitCopy: false,
-        submitOriginal: false,
-        notYetSubmitted: true
-      },
-      birthCertificateRequirements: {
-        presentOriginal: false,
-        submitCopy: false,
-        notYetSubmitted: true
-      },
-      policeNbiRequirements: {
-        submitCopy: false,
-        submitOriginal: false,
-        notYetSubmitted: true
-      },
-      barangayClearanceRequirements: {
-        submitCopy: false,
-        submitOriginal: false,
-        notYetSubmitted: true
-      },
-      cedulaRequirements: {
-        presentOriginal: false,
-        submitCopy: false,
-        notYetSubmitted: true
-      }
+      tinRequirements: { presentForm: false, submitCopy: false, notYetSubmitted: true },
+      sssRequirements: { presentForm: false, presentID: false, submitCopy: false, notYetSubmitted: true },
+      philhealthRequirements: { presentMDR: false, presentID: false, submitCopy: false, notYetSubmitted: true },
+      pagibigRequirements: { presentMDF: false, presentID: false, submitCopy: false, notYetSubmitted: true },
+      healthCardRequirements: { presentOriginal: false, submitCopy: false, notYetSubmitted: true },
+      professionalIDRequirements: { presentOriginal: false, submitCopy: false, notYetSubmitted: true },
+      driversLicenseRequirements: { presentOriginal: false, submitCopy: false, notYetSubmitted: true },
+      barangayWorkingPermitRequirements: { submitCopy: false, submitOriginal: false, notYetSubmitted: true },
+      birthCertificateRequirements: { presentOriginal: false, submitCopy: false, notYetSubmitted: true },
+      policeNbiRequirements: { submitCopy: false, submitOriginal: false, notYetSubmitted: true },
+      barangayClearanceRequirements: { submitCopy: false, submitOriginal: false, notYetSubmitted: true },
+      cedulaRequirements: { presentOriginal: false, submitCopy: false, notYetSubmitted: true }
     }
   };
 
@@ -243,64 +199,144 @@ const AddEmp = ({ onCancel, onEmployeeAdded }) => {
     
     switch(step) {
       case 1:
-        if (!formData.firstName.trim()) newErrors.firstName = 'First name is required';
-        if (!formData.lastName.trim()) newErrors.lastName = 'Last name is required';
+        // Basic Information validation
+        if (!formData.firstName?.trim()) newErrors.firstName = 'First name is required';
+        if (!formData.lastName?.trim()) newErrors.lastName = 'Last name is required';
         if (!formData.gender) newErrors.gender = 'Gender is required';
+        if (!formData.religion?.trim()) newErrors.religion = 'Religion is required';
         if (!formData.birthday) newErrors.birthday = 'Birthday is required';
+        if (!formData.birthplace?.trim()) newErrors.birthplace = 'Birthplace is required';
         if (!formData.age) newErrors.age = 'Age is required';
         break;
+        
       case 2:
-        if (!formData.contactNumber) newErrors.contactNumber = 'Contact number is required';
+        // Contact Information validation
+        if (!formData.contactNumber?.trim()) newErrors.contactNumber = 'Contact number is required';
         
-        if (!formData.email.trim()) newErrors.email = 'Email is required';
-        else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) newErrors.email = 'Invalid email format';
+        if (!formData.email?.trim()) {
+          newErrors.email = 'Email is required';
+        } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+          newErrors.email = 'Invalid email format';
+        }
         
-        if (!formData.emergencyContact.firstName) {
+        // Emergency contact validation
+        if (!formData.emergencyContact?.firstName?.trim()) {
           newErrors.emergencyContactFirstName = 'Emergency contact first name is required';
         }
-        if (!formData.emergencyContact.lastName) {
+        if (!formData.emergencyContact?.lastName?.trim()) {
           newErrors.emergencyContactLastName = 'Emergency contact last name is required';
         }
-        if (!formData.emergencyContact.relationship) {
+        if (!formData.emergencyContact?.relationship?.trim()) {
           newErrors.emergencyContactRelationship = 'Emergency contact relationship is required';
         }
-        if (formData.emergencyContact.type === 'Mobile' && !formData.emergencyContact.mobile) {
-          newErrors.emergencyContactNumber = 'Emergency mobile number is required';
-        } else if (formData.emergencyContact.type === 'Landline' && !formData.emergencyContact.landline) {
-          newErrors.emergencyContactNumber = 'Emergency landline number is required';
+        
+        // Emergency contact number validation
+        if (formData.emergencyContact?.type === 'Mobile') {
+          if (!formData.emergencyContact?.mobile?.trim()) {
+            newErrors.emergencyContactNumber = 'Emergency mobile number is required';
+          }
+        } else {
+          if (!formData.emergencyContact?.landline?.trim()) {
+            newErrors.emergencyContactNumber = 'Emergency landline number is required';
+          }
         }
         
-        if (!formData.currentAddress.province) newErrors.currentAddress = { ...newErrors.currentAddress, province: 'Province is required' };
-        if (!formData.currentAddress.city) newErrors.currentAddress = { ...newErrors.currentAddress, city: 'City is required' };
-        if (!formData.currentAddress.barangay) newErrors.currentAddress = { ...newErrors.currentAddress, barangay: 'Barangay is required' };
+        // Current address validation
+        if (!formData.currentAddress?.street?.trim()) {
+          if (!newErrors.currentAddress) newErrors.currentAddress = {};
+          newErrors.currentAddress.street = 'Street is required';
+        }
+        if (!formData.currentAddress?.area?.trim()) {
+          if (!newErrors.currentAddress) newErrors.currentAddress = {};
+          newErrors.currentAddress.area = 'Area is required';
+        }
+        if (!formData.currentAddress?.barangay?.trim()) {
+          if (!newErrors.currentAddress) newErrors.currentAddress = {};
+          newErrors.currentAddress.barangay = 'Barangay is required';
+        }
+        if (!formData.currentAddress?.city?.trim()) {
+          if (!newErrors.currentAddress) newErrors.currentAddress = {};
+          newErrors.currentAddress.city = 'City is required';
+        }
+        if (!formData.currentAddress?.province?.trim()) {
+          if (!newErrors.currentAddress) newErrors.currentAddress = {};
+          newErrors.currentAddress.province = 'Province is required';
+        }
         break;
+        
       case 3:
-        if (!formData.department) newErrors.department = 'Department is required';
-        if (!formData.position) newErrors.position = 'Position is required';
+        // Employment Details validation
+        if (!formData.department?.trim()) newErrors.department = 'Department is required';
+        if (!formData.position?.trim()) newErrors.position = 'Position is required';
         if (!formData.workType) newErrors.workType = 'Work type is required';
         
-        const hasActiveDay = Object.values(formData.workSchedule).some(day => day.active);
-        if (!hasActiveDay) newErrors.workSchedule = 'At least one work day must be selected';
+        // Work schedule validation
+        const hasActiveDay = Object.values(formData.workSchedule || {}).some(day => day.active);
+        if (!hasActiveDay) {
+          newErrors.workSchedule = 'At least one work day must be selected';
+        }
         
-        Object.entries(formData.workSchedule).forEach(([day, schedule]) => {
+        // Validate active days have times
+        Object.entries(formData.workSchedule || {}).forEach(([day, schedule]) => {
           if (schedule.active) {
-            if (!schedule.start) newErrors.workSchedule = `Start time is required for ${day}`;
-            else if (!schedule.end) newErrors.workSchedule = `End time is required for ${day}`;
+            if (!schedule.start) {
+              newErrors.workSchedule = `Start time is required for ${day}`;
+            }
+            if (!schedule.end) {
+              newErrors.workSchedule = `End time is required for ${day}`;
+            }
           }
         });
         break;
+        
       case 4:
         // Final validation before submission
-        if (!formData.firstName.trim()) newErrors.firstName = 'First name is required';
-        if (!formData.lastName.trim()) newErrors.lastName = 'Last name is required';
+        if (!formData.firstName?.trim()) newErrors.firstName = 'First name is required';
+        if (!formData.lastName?.trim()) newErrors.lastName = 'Last name is required';
         if (!formData.gender) newErrors.gender = 'Gender is required';
+        if (!formData.religion?.trim()) newErrors.religion = 'Religion is required';
         if (!formData.birthday) newErrors.birthday = 'Birthday is required';
-        if (!formData.contactNumber) newErrors.contactNumber = 'Contact number is required';
-        if (!formData.email.trim()) newErrors.email = 'Email is required';
-        if (!formData.department) newErrors.department = 'Department is required';
-        if (!formData.position) newErrors.position = 'Position is required';
+        if (!formData.birthplace?.trim()) newErrors.birthplace = 'Birthplace is required';
+        if (!formData.contactNumber?.trim()) newErrors.contactNumber = 'Contact number is required';
+        if (!formData.email?.trim()) newErrors.email = 'Email is required';
+        if (!formData.department?.trim()) newErrors.department = 'Department is required';
+        if (!formData.position?.trim()) newErrors.position = 'Position is required';
         if (!formData.workType) newErrors.workType = 'Work type is required';
+        
+        // Emergency contact validation
+        if (!formData.emergencyContact?.firstName?.trim()) {
+          newErrors.emergencyContactFirstName = 'Emergency contact first name is required';
+        }
+        if (!formData.emergencyContact?.lastName?.trim()) {
+          newErrors.emergencyContactLastName = 'Emergency contact last name is required';
+        }
+        if (!formData.emergencyContact?.relationship?.trim()) {
+          newErrors.emergencyContactRelationship = 'Emergency contact relationship is required';
+        }
+        
+        // Current address validation
+        if (!formData.currentAddress?.street?.trim()) {
+          if (!newErrors.currentAddress) newErrors.currentAddress = {};
+          newErrors.currentAddress.street = 'Street is required';
+        }
+        if (!formData.currentAddress?.area?.trim()) {
+          if (!newErrors.currentAddress) newErrors.currentAddress = {};
+          newErrors.currentAddress.area = 'Area is required';
+        }
+        if (!formData.currentAddress?.barangay?.trim()) {
+          if (!newErrors.currentAddress) newErrors.currentAddress = {};
+          newErrors.currentAddress.barangay = 'Barangay is required';
+        }
+        if (!formData.currentAddress?.city?.trim()) {
+          if (!newErrors.currentAddress) newErrors.currentAddress = {};
+          newErrors.currentAddress.city = 'City is required';
+        }
+        if (!formData.currentAddress?.province?.trim()) {
+          if (!newErrors.currentAddress) newErrors.currentAddress = {};
+          newErrors.currentAddress.province = 'Province is required';
+        }
         break;
+        
       default:
         break;
     }
@@ -344,7 +380,6 @@ const AddEmp = ({ onCancel, onEmployeeAdded }) => {
         }
       }));
     } else if (typeof value === 'object' && value !== null) {
-      // Handle nested object updates (like requirements)
       setFormData(prev => ({
         ...prev,
         [name]: value
@@ -370,10 +405,8 @@ const AddEmp = ({ onCancel, onEmployeeAdded }) => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    // Set that user has attempted to submit
     setHasAttemptedSubmit(true);
     
-    // Validate all steps before submission
     if (!validateStep(4)) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
@@ -382,14 +415,16 @@ const AddEmp = ({ onCancel, onEmployeeAdded }) => {
     setIsSubmitting(true);
     
     try {
-      // Prepare the data for submission - FIXED requirements structure
       const submissionData = {
         firstName: formData.firstName.trim(),
-        middleName: formData.middleName.trim(),
+        middleName: formData.middleName?.trim() || '',
         lastName: formData.lastName.trim(),
+        suffix: formData.suffix || '',
         gender: formData.gender,
-        civilStatus: formData.civilStatus,
+        civilStatus: formData.civilStatus || '',
+        religion: formData.religion.trim(),
         birthday: formData.birthday,
+        birthplace: formData.birthplace.trim(),
         age: parseInt(formData.age),
         contactNumber: formData.contactNumber,
         email: formData.email.trim().toLowerCase(),
@@ -400,26 +435,59 @@ const AddEmp = ({ onCancel, onEmployeeAdded }) => {
         emergencyContact: {
           firstName: formData.emergencyContact.firstName.trim(),
           lastName: formData.emergencyContact.lastName.trim(),
-          relationship: formData.emergencyContact.relationship || '',
+          relationship: formData.emergencyContact.relationship.trim(),
           type: formData.emergencyContact.type || 'Landline',
           mobile: formData.emergencyContact.mobile || '',
           landline: formData.emergencyContact.landline || ''
         },
-        currentAddress: formData.currentAddress,
-        permanentAddress: formData.sameAsCurrent ? formData.currentAddress : formData.permanentAddress,
+        currentAddress: {
+          blkLt: formData.currentAddress.blkLt || '',
+          block: formData.currentAddress.block || '',
+          lot: formData.currentAddress.lot || '',
+          street: formData.currentAddress.street.trim(),
+          area: formData.currentAddress.area.trim(),
+          barangay: formData.currentAddress.barangay.trim(),
+          city: formData.currentAddress.city.trim(),
+          province: formData.currentAddress.province.trim(),
+          postalCode: formData.currentAddress.postalCode || '',
+          country: formData.currentAddress.country || 'Philippines'
+        },
+        permanentAddress: formData.sameAsCurrent ? {
+          blkLt: formData.currentAddress.blkLt || '',
+          block: formData.currentAddress.block || '',
+          lot: formData.currentAddress.lot || '',
+          street: formData.currentAddress.street.trim(),
+          area: formData.currentAddress.area.trim(),
+          barangay: formData.currentAddress.barangay.trim(),
+          city: formData.currentAddress.city.trim(),
+          province: formData.currentAddress.province.trim(),
+          postalCode: formData.currentAddress.postalCode || '',
+          country: formData.currentAddress.country || 'Philippines'
+        } : {
+          blkLt: formData.permanentAddress.blkLt || '',
+          block: formData.permanentAddress.block || '',
+          lot: formData.permanentAddress.lot || '',
+          street: formData.permanentAddress.street?.trim() || '',
+          area: formData.permanentAddress.area?.trim() || '',
+          barangay: formData.permanentAddress.barangay?.trim() || '',
+          city: formData.permanentAddress.city?.trim() || '',
+          province: formData.permanentAddress.province?.trim() || '',
+          postalCode: formData.permanentAddress.postalCode || '',
+          country: formData.permanentAddress.country || 'Philippines'
+        },
+        sameAsCurrent: formData.sameAsCurrent,
         department: formData.department,
         position: formData.position,
-        teachingLevel: formData.teachingLevel,
+        teachingLevel: formData.teachingLevel || [],
         workType: formData.workType,
         workSchedule: formData.workSchedule,
         dateStart: formData.dateStart || null,
         dateSeparated: formData.dateSeparated || null,
-        // FIXED: Properly structured requirements data - ALL CHOICES WORK
-        requirements: formData.requirements || {},
+        requirements: formData.requirements,
         status: 'Active'
       };
 
-      console.log('Submitting employee data with requirements:', JSON.stringify(submissionData.requirements, null, 2));
+      console.log('Submitting employee data:', JSON.stringify(submissionData, null, 2));
 
       const response = await fetch('http://localhost:5000/api/employees', {
         method: 'POST',

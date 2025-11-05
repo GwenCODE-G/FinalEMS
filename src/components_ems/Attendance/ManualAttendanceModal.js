@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 
 const ManualAttendanceModal = ({
@@ -18,92 +18,88 @@ const ManualAttendanceModal = ({
   const [validationError, setValidationError] = useState('');
   const [attendanceRecord, setAttendanceRecord] = useState(null);
   const [timeInSource, setTimeInSource] = useState('');
+  const [isOnLeave, setIsOnLeave] = useState(false);
 
-  // Fetch existing attendance record when modal opens
-  useEffect(() => {
+  const fetchExistingAttendance = useCallback(async () => {
     if (!isOpen || !employee || !apiBaseUrl) return;
 
-    const fetchExistingAttendance = async () => {
-      setLoading(true);
-      setValidationError('');
-      try {
-        console.log('🔍 Fetching attendance record for:', {
-          employeeId: employee.employeeId,
-          date: selectedDate,
-          action: action
-        });
+    setLoading(true);
+    setValidationError('');
+    try {
+      console.log('Fetching attendance record for:', {
+        employeeId: employee.employeeId,
+        date: selectedDate,
+        action: action
+      });
 
-        // Get today's attendance for this specific employee
-        const response = await axios.get(
-          `${apiBaseUrl}/api/attendance/today`,
-          { timeout: 10000 }
+      const response = await axios.get(
+        `${apiBaseUrl}/api/attendance/today`,
+        { timeout: 10000 }
+      );
+
+      console.log('Today attendance response:', response.data);
+
+      if (response.data.success && response.data.data) {
+        const employeeRecord = response.data.data.find(
+          record => record.employeeId === employee.employeeId
         );
 
-        console.log('📊 Today attendance response:', response.data);
+        console.log('Employee attendance record:', employeeRecord);
 
-        if (response.data.success && response.data.data) {
-          // Find this employee's record in today's attendance
-          const employeeRecord = response.data.data.find(
-            record => record.employeeId === employee.employeeId
-          );
-
-          console.log('👤 Employee attendance record:', employeeRecord);
-
-          if (employeeRecord) {
-            setAttendanceRecord(employeeRecord);
+        if (employeeRecord) {
+          setAttendanceRecord(employeeRecord);
+          
+          if (employeeRecord.isLeaveRecord) {
+            setIsOnLeave(true);
+            setValidationError('Cannot record attendance while employee is on leave');
+            return;
+          }
+          
+          if (employeeRecord.timeIn) {
+            setExistingTimeIn(employeeRecord.timeIn);
+            setTimeInSource(employeeRecord.timeInSource || 'unknown');
             
-            if (employeeRecord.timeIn) {
-              setExistingTimeIn(employeeRecord.timeIn);
-              setTimeInSource(employeeRecord.timeInSource || 'unknown');
-              
-              // Calculate minimum time out (time in + 10 minutes)
-              const timeIn = new Date(employeeRecord.timeIn);
-              const minTimeOutDate = new Date(timeIn.getTime() + (10 * 60 * 1000));
-              setMinTimeOut(minTimeOutDate);
-              
-              console.log('⏰ Time In Details:', {
-                timeIn: timeIn.toLocaleString(),
-                source: employeeRecord.timeInSource,
-                minTimeOut: minTimeOutDate.toLocaleString()
-              });
-            } else {
-              console.log('❌ No time in found in record');
-              setExistingTimeIn(null);
-            }
+            const timeIn = new Date(employeeRecord.timeIn);
+            const minTimeOutDate = new Date(timeIn.getTime() + (10 * 60 * 1000));
+            setMinTimeOut(minTimeOutDate);
+            
+            console.log('Time In Details:', {
+              timeIn: timeIn.toLocaleString(),
+              source: employeeRecord.timeInSource,
+              minTimeOut: minTimeOutDate.toLocaleString()
+            });
           } else {
-            console.log('❌ No attendance record found for employee today');
+            console.log('No time in found in record');
             setExistingTimeIn(null);
           }
         } else {
-          console.log('❌ No attendance data in response');
+          console.log('No attendance record found for employee today');
           setExistingTimeIn(null);
         }
-      } catch (error) {
-        console.error('💥 Error fetching existing attendance:', error);
-        if (error.response) {
-          console.error('Error response:', error.response.data);
-        }
-        setValidationError('Error checking existing attendance record. Please try again.');
-      } finally {
-        setLoading(false);
+      } else {
+        console.log('No attendance data in response');
+        setExistingTimeIn(null);
       }
-    };
+    } catch (error) {
+      console.error('Error fetching existing attendance:', error);
+      if (error.response) {
+        console.error('Error response:', error.response.data);
+      }
+      setValidationError('Error checking existing attendance record. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }, [isOpen, employee, selectedDate, action, apiBaseUrl]);
 
-    fetchExistingAttendance();
-  }, [isOpen, employee, action, selectedDate, apiBaseUrl]);
-
-  // Update current time every second
   useEffect(() => {
     if (!isOpen) return;
 
     const updateTime = () => {
       const now = new Date();
-      // Convert to Philippine Time (UTC+8)
       const phTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
       const timeString24 = phTime.toISOString().substr(11, 5);
       setCurrentTime24(timeString24);
       
-      // Convert to 12-hour format
       const [hours, minutes] = timeString24.split(':');
       const hour = parseInt(hours);
       const period = hour >= 12 ? 'PM' : 'AM';
@@ -112,22 +108,28 @@ const ManualAttendanceModal = ({
       setCurrentTime(timeString12);
     };
 
-    updateTime(); // Initial call
+    updateTime();
     const interval = setInterval(updateTime, 1000);
 
     return () => clearInterval(interval);
   }, [isOpen]);
 
-  // Validate time out against 10-minute rule
+  useEffect(() => {
+    if (isOpen && employee && apiBaseUrl) {
+      fetchExistingAttendance();
+      setIsOnLeave(false);
+    }
+  }, [isOpen, employee, action, selectedDate, apiBaseUrl, fetchExistingAttendance]);
+
   const validateTimeOut = (timeIn, proposedTimeOut) => {
     if (!timeIn || !proposedTimeOut) return { valid: false, error: 'Missing time data' };
 
     const timeInDate = new Date(timeIn);
     const timeOutDate = new Date(proposedTimeOut);
     
-    const timeDifference = (timeOutDate - timeInDate) / (1000 * 60); // difference in minutes
+    const timeDifference = (timeOutDate - timeInDate) / (1000 * 60);
     
-    console.log('⏱️ Time validation:', {
+    console.log('Time validation:', {
       timeIn: timeInDate.toLocaleString(),
       timeOut: timeOutDate.toLocaleString(),
       difference: timeDifference + ' minutes'
@@ -145,56 +147,77 @@ const ManualAttendanceModal = ({
     return { valid: true, error: '' };
   };
 
+  const isWithinTimeInHours = (time24) => {
+    const [hours, minutes] = time24.split(':').map(Number);
+    const totalMinutes = hours * 60 + minutes;
+    
+    return totalMinutes >= 360 && totalMinutes < 1020;
+  };
+
+  const isWithinTimeOutHours = (time24) => {
+    const [hours, minutes] = time24.split(':').map(Number);
+    const totalMinutes = hours * 60 + minutes;
+    
+    return totalMinutes >= 360 && totalMinutes < 1140;
+  };
+
+  const isWithinWorkingHours = (time24) => {
+    const [hours, minutes] = time24.split(':').map(Number);
+    const totalMinutes = hours * 60 + minutes;
+    
+    return totalMinutes >= 360 && totalMinutes < 1140;
+  };
+
   const handleConfirm = async () => {
     if (!currentTime24) {
       setValidationError('Please wait for time to sync');
       return;
     }
 
-    // Create full datetime for validation
+    if (isOnLeave) {
+      setValidationError('Cannot record attendance while employee is on leave');
+      return;
+    }
+
     const proposedTime = new Date(`${selectedDate}T${currentTime24}:00`);
-    const hours = proposedTime.getHours();
-    const minutes = proposedTime.getMinutes();
-    const totalMinutes = hours * 60 + minutes;
 
     if (action === 'timein') {
-      // Check if time in already exists
       if (existingTimeIn) {
         setValidationError('Time in already recorded for today. Cannot record duplicate time in.');
         return;
       }
 
-      // Time in allowed: 6:00 AM - 5:00 PM (360 to 1020 minutes)
-      if (totalMinutes < 360 || totalMinutes >= 1020) {
+      if (!isWithinTimeInHours(currentTime24)) {
         setValidationError('Manual time in only allowed between 6:00 AM - 5:00 PM (Philippine Time)');
         return;
       }
     } 
     else if (action === 'timeout') {
-      // Check if time in exists
       if (!existingTimeIn) {
         setValidationError('Cannot record time out: No time in record found for today.');
         return;
       }
 
-      // Check if time out already exists
       if (attendanceRecord && attendanceRecord.timeOut) {
         setValidationError('Time out already recorded for today. Cannot record duplicate time out.');
         return;
       }
 
-      // Validate 10-minute rule
       const validation = validateTimeOut(existingTimeIn, proposedTime);
       if (!validation.valid) {
         setValidationError(validation.error);
         return;
       }
 
-      // Time out allowed: 6:00 AM - 7:00 PM (360 to 1140 minutes)
-      if (totalMinutes < 360 || totalMinutes >= 1140) {
+      if (!isWithinTimeOutHours(currentTime24)) {
         setValidationError('Manual time out only allowed between 6:00 AM - 7:00 PM (Philippine Time)');
         return;
       }
+    }
+
+    if (!isWithinWorkingHours(currentTime24)) {
+      setValidationError('Manual recording only allowed between 6:00 AM - 7:00 PM (Philippine Time)');
+      return;
     }
 
     setValidationError('');
@@ -226,7 +249,7 @@ const ManualAttendanceModal = ({
 
     const timeInDate = new Date(existingTimeIn);
     const timeOutDate = new Date(`${selectedDate}T${currentTime24}:00`);
-    const difference = (timeOutDate - timeInDate) / (1000 * 60); // minutes
+    const difference = (timeOutDate - timeInDate) / (1000 * 60);
 
     return difference;
   };
@@ -267,7 +290,14 @@ const ManualAttendanceModal = ({
           </button>
         </div>
         
-        {/* Real-time Philippine Time Display */}
+        {isOnLeave && (
+          <div className="mb-4 p-3 bg-red-50 rounded border border-red-200">
+            <p className="text-sm text-red-700 text-center font-medium">
+              Employee is currently on leave. Cannot record attendance.
+            </p>
+          </div>
+        )}
+        
         <div className="mb-4 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border-2 border-blue-200">
           <div className="flex justify-between items-center mb-1">
             <span className="text-sm font-medium text-gray-700">Current Philippine Time:</span>
@@ -298,7 +328,6 @@ const ManualAttendanceModal = ({
           />
         </div>
         
-        {/* Time Information Section */}
         <div className="mb-4">
           <label className="block text-sm font-medium text-gray-700 mb-2">
             Time (Automatic - Cannot be changed)
@@ -314,7 +343,6 @@ const ManualAttendanceModal = ({
           </div>
         </div>
 
-        {/* Existing Record Information */}
         <div className="mb-4">
           {loading ? (
             <div className="text-center py-2">
@@ -323,7 +351,6 @@ const ManualAttendanceModal = ({
             </div>
           ) : (
             <>
-              {/* Time In Information */}
               {existingTimeIn && (
                 <div className="bg-green-50 p-3 rounded-lg border border-green-200 mb-3">
                   <h4 className="text-sm font-semibold text-green-800 mb-2 flex items-center justify-between">
@@ -348,7 +375,6 @@ const ManualAttendanceModal = ({
                     </div>
                   </div>
                   
-                  {/* 10-Minute Rule Information for Time Out */}
                   {action === 'timeout' && minTimeOut && (
                     <div className="mt-3 p-2 bg-white rounded border border-green-300">
                       <div className="text-xs text-green-700">
@@ -368,7 +394,6 @@ const ManualAttendanceModal = ({
                 </div>
               )}
 
-              {/* Time Out Information */}
               {hasExistingTimeOut && (
                 <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
                   <h4 className="text-sm font-semibold text-blue-800 mb-2 flex items-center justify-between">
@@ -385,7 +410,6 @@ const ManualAttendanceModal = ({
                 </div>
               )}
 
-              {/* No Record Found */}
               {!existingTimeIn && action === 'timeout' && !loading && (
                 <div className="bg-yellow-50 p-3 rounded-lg border border-yellow-200">
                   <p className="text-sm text-yellow-700 text-center">
@@ -397,24 +421,26 @@ const ManualAttendanceModal = ({
           )}
         </div>
 
-        {/* Time restriction messages */}
         <div className="mb-4">
           {action === 'timein' && (
             <div className="p-3 bg-blue-50 rounded border border-blue-200">
-              <p className="text-xs text-blue-700 font-semibold mb-1">⏰ Time In Restrictions:</p>
+              <p className="text-xs text-blue-700 font-semibold mb-1">Time In Restrictions:</p>
               <p className="text-xs text-blue-600">
-                • Allowed: 6:00 AM - 5:00 PM (Philippine Time)
+                • Allowed: 6:00 AM - 5:00 PM (Philippine Time) Everyday
               </p>
               <p className="text-xs text-blue-600">
                 • Cannot record if time in already exists
+              </p>
+              <p className="text-xs text-blue-600">
+                • Cannot record if employee is on leave
               </p>
             </div>
           )}
           {action === 'timeout' && (
             <div className="p-3 bg-yellow-50 rounded border border-yellow-200">
-              <p className="text-xs text-yellow-700 font-semibold mb-1">⏰ Time Out Restrictions:</p>
+              <p className="text-xs text-yellow-700 font-semibold mb-1">Time Out Restrictions:</p>
               <p className="text-xs text-yellow-600 mb-1">
-                • Allowed: 6:00 AM - 7:00 PM (Philippine Time)
+                • Allowed: 6:00 AM - 7:00 PM (Philippine Time) Everyday
               </p>
               <p className="text-xs text-yellow-600">
                 • Minimum: At least 10 minutes after time in
@@ -422,11 +448,13 @@ const ManualAttendanceModal = ({
               <p className="text-xs text-yellow-600">
                 • Cannot record if time out already exists
               </p>
+              <p className="text-xs text-yellow-600">
+                • Cannot record if employee is on leave
+              </p>
             </div>
           )}
         </div>
 
-        {/* Validation Error */}
         {validationError && (
           <div className="mb-4 p-3 bg-red-50 rounded border border-red-200">
             <p className="text-sm text-red-700 text-center font-medium">
@@ -435,7 +463,6 @@ const ManualAttendanceModal = ({
           </div>
         )}
 
-        {/* Action Buttons */}
         <div className="flex justify-end space-x-3">
           <button
             onClick={onClose}
@@ -445,11 +472,11 @@ const ManualAttendanceModal = ({
           </button>
           <button
             onClick={handleConfirm}
-            disabled={loading || 
+            disabled={loading || isOnLeave || 
               (action === 'timein' && existingTimeIn) || 
               (action === 'timeout' && (!existingTimeIn || hasExistingTimeOut || !isTimeOutValid))}
             className={`px-4 py-2 text-white rounded-md text-sm ${
-              loading || 
+              loading || isOnLeave || 
               (action === 'timein' && existingTimeIn) || 
               (action === 'timeout' && (!existingTimeIn || hasExistingTimeOut || !isTimeOutValid))
                 ? 'bg-gray-400 cursor-not-allowed'
@@ -460,18 +487,17 @@ const ManualAttendanceModal = ({
           </button>
         </div>
 
-        {/* Recording info */}
         <div className="mt-4 p-3 bg-green-50 rounded border border-green-200">
           <p className="text-xs text-green-700 text-center">
-            ✓ System will record: <strong className="text-green-800">{currentTime}</strong> when you click "Record"
+            System will record: <strong className="text-green-800">{currentTime}</strong> when you click "Record"
           </p>
           {action === 'timeout' && timeDifference !== null && isTimeOutValid && (
             <p className="text-xs text-green-700 text-center mt-1">
-              ✓ Time difference: <strong className="text-green-800">{formatDuration(timeDifference)}</strong> (meets 10-minute requirement)
+              Time difference: <strong className="text-green-800">{formatDuration(timeDifference)}</strong> (meets 10-minute requirement)
             </p>
           )}
           <p className="text-xs text-green-600 text-center mt-1">
-            ✓ Compatible with RFID and Manual records
+            Available everyday: 6:00 AM - 7:00 PM
           </p>
         </div>
       </div>

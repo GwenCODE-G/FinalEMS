@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { 
-  FaSearch, FaServer, FaTimes,
+  FaServer, FaTimes,
   FaCheckCircle, FaPlug, FaCalendarDay,
   FaCalendarAlt,
   FaExclamationTriangle
@@ -52,6 +52,7 @@ const useRealTimeUpdates = (apiBaseUrl) => {
   useEffect(() => {
     if (!apiBaseUrl) return;
 
+    // Simulate real-time updates (replace with actual WebSocket/Socket.io)
     const interval = setInterval(() => {
       setRealTimeData(prev => ({ ...prev }));
     }, 10000);
@@ -62,11 +63,64 @@ const useRealTimeUpdates = (apiBaseUrl) => {
   return realTimeData;
 };
 
+// Custom Alert Component
+const CustomAlert = ({ message, type = 'info', onClose }) => {
+  const getAlertStyles = () => {
+    switch (type) {
+      case 'success':
+        return {
+          background: 'linear-gradient(135deg, #400504 0%, #300303 100%)',
+          border: '2px solid #cba235',
+          color: 'white'
+        };
+      case 'error':
+        return {
+          background: 'linear-gradient(135deg, #400504 0%, #300303 100%)',
+          border: '2px solid #ff6b6b',
+          color: 'white'
+        };
+      case 'warning':
+        return {
+          background: 'linear-gradient(135deg, #400504 0%, #300303 100%)',
+          border: '2px solid #cba235',
+          color: 'white'
+        };
+      default:
+        return {
+          background: 'linear-gradient(135deg, #400504 0%, #300303 100%)',
+          border: '2px solid #cba235',
+          color: 'white'
+        };
+    }
+  };
+
+  return (
+    <div className="fixed top-4 right-4 z-50 animate-fade-in">
+      <div style={getAlertStyles()} className="px-6 py-4 rounded-lg shadow-lg">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center">
+            {type === 'success' && <FaCheckCircle className="h-5 w-5 text-[#cba235] mr-3" />}
+            {type === 'error' && <FaTimes className="h-5 w-5 text-[#ff6b6b] mr-3" />}
+            {type === 'warning' && <FaExclamationTriangle className="h-5 w-5 text-[#cba235] mr-3" />}
+            <p className="text-sm font-medium">{message}</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="ml-4 text-[#cba235] hover:text-white transition-colors"
+          >
+            <FaTimes />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 function Attendance() {
   const [attendance, setAttendance] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [filteredEmployees, setFilteredEmployees] = useState([]);
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchTerm] = useState('');
   const [selectedDate, setSelectedDate] = useState(() => {
     const today = new Date();
     const year = today.getFullYear();
@@ -89,13 +143,14 @@ function Attendance() {
     },
     records: []
   });
-  const [successMessage, setSuccessMessage] = useState('');
+  const [successMessage] = useState('');
   const [showSuccess, setShowSuccess] = useState(false);
+  const [alert, setAlert] = useState(null);
 
   const [showSummaryModal, setShowSummaryModal] = useState(false);
-  const [departmentFilter, setDepartmentFilter] = useState('all');
-  const [positionFilter, setPositionFilter] = useState('all');
-  const [sortConfig, setSortConfig] = useState({ key: 'recentActivity', direction: 'desc' });
+  const [departmentFilter] = useState('all');
+  const [positionFilter] = useState('all');
+  const [sortConfig] = useState({ key: 'recentActivity', direction: 'desc' });
 
   const [rfidAssignment, setRfidAssignment] = useState({
     isOpen: false,
@@ -115,6 +170,12 @@ function Attendance() {
   });
 
   const realTimeUpdates = useRealTimeUpdates(apiBaseUrl);
+
+  // Show alert function
+  const showAlert = (message, type = 'info') => {
+    setAlert({ message, type });
+    setTimeout(() => setAlert(null), 5000);
+  };
 
   const getMinDate = () => {
     const octoberFirst = new Date('2024-10-01');
@@ -146,15 +207,6 @@ function Attendance() {
     return `${year}-${month}-${day}`;
   };
 
-  const showSuccessMessage = (message) => {
-    setSuccessMessage(message);
-    setShowSuccess(true);
-    setTimeout(() => {
-      setShowSuccess(false);
-      setSuccessMessage('');
-    }, 5000);
-  };
-
   const initializeAPI = useCallback(async () => {
     try {
       console.log('Initializing API connection...');
@@ -162,10 +214,10 @@ function Attendance() {
       setApiBaseUrl(baseUrl);
       
       try {
-        const statusResponse = await axios.get(`${baseUrl}/api/rfid/status`, { timeout: 5000 });
+        const statusResponse = await axios.get(`${baseUrl}/api/rfid/health`, { timeout: 5000 });
         setRfidStatus({
-          connected: statusResponse.data.isConnected,
-          status: statusResponse.data.status
+          connected: statusResponse.data.status === 'OK',
+          status: statusResponse.data.status || 'Connected'
         });
       } catch (statusError) {
         console.log('RFID status check failed, using simulation mode');
@@ -332,6 +384,68 @@ function Attendance() {
     }
   }, [apiBaseUrl]);
 
+  // Enhanced RFID Removal Function
+  const handleRemoveRfid = async (employee) => {
+    if (!apiBaseUrl) {
+      showAlert('Backend connection not available.', 'error');
+      return;
+    }
+
+    if (!employee.rfidUid || !employee.isRfidAssigned) {
+      showAlert('This employee does not have an RFID assigned.', 'warning');
+      return;
+    }
+
+    // Confirm removal
+    const confirmRemove = window.confirm(
+      `Are you sure you want to remove RFID assignment from ${employee.firstName} ${employee.lastName}?\n\nRFID UID: ${employee.rfidUid}`
+    );
+
+    if (!confirmRemove) return;
+
+    try {
+      console.log('Removing RFID for employee:', employee.employeeId);
+
+      // Try the new endpoint first
+      let response;
+      try {
+        response = await fetch(`${apiBaseUrl}/api/rfid/remove/${employee.employeeId}`, {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+      } catch (error) {
+        // Fallback to old endpoint
+        console.log('Trying fallback endpoint...');
+        response = await fetch(`${apiBaseUrl}/api/rfid/assign/${employee.employeeId}`, {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+      }
+
+      const result = await response.json();
+
+      if (result.success) {
+        console.log('RFID removal successful:', result);
+        
+        // Show success message
+        showAlert(`RFID successfully removed from ${employee.firstName} ${employee.lastName}`, 'success');
+        
+        // Refresh the employee list to reflect changes
+        fetchEmployees(apiBaseUrl);
+      } else {
+        throw new Error(result.message || 'Failed to remove RFID');
+      }
+
+    } catch (error) {
+      console.error('RFID removal error:', error);
+      showAlert(`Error removing RFID: ${error.message}`, 'error');
+    }
+  };
+
   const applyFilters = useCallback((empList, attendanceList, search, dept, position, date) => {
     let filtered = empList;
 
@@ -411,13 +525,6 @@ function Attendance() {
     });
   };
 
-  const handleSort = (key) => {
-    setSortConfig(prevConfig => ({
-      key,
-      direction: prevConfig.key === key && prevConfig.direction === 'asc' ? 'desc' : 'asc'
-    }));
-  };
-
   const handleDateChange = (date) => {
     console.log('Date changed to:', date);
     setSelectedDate(date);
@@ -441,18 +548,6 @@ function Attendance() {
       isOpen: true,
       employee,
       mode: 'scan',
-      scannedUid: '',
-      existingAssignment: null,
-      removalReason: '',
-      otherReason: ''
-    });
-  };
-
-  const openRemoveRfidModal = (employee) => {
-    setRfidAssignment({
-      isOpen: true,
-      employee,
-      mode: 'remove',
       scannedUid: '',
       existingAssignment: null,
       removalReason: '',
@@ -492,73 +587,50 @@ function Attendance() {
 
   const handleScanRfid = async (uid) => {
     if (!apiBaseUrl) {
-      alert('Backend connection not available.');
+      showAlert('Backend connection not available.', 'error');
       return;
     }
 
     try {
-      const formattedUid = uid.match(/.{1,2}/g).join(' ').toUpperCase();
-      
-      await axios.post(`${apiBaseUrl}/api/rfid/assign`, {
+      const response = await axios.post(`${apiBaseUrl}/api/rfid/assign`, {
         employeeId: rfidAssignment.employee.employeeId,
-        rfidUid: formattedUid
+        rfidUid: uid
       });
 
-      showSuccessMessage(`RFID successfully assigned to ${rfidAssignment.employee.firstName} ${rfidAssignment.employee.lastName}`);
-      closeRfidAssignmentModal();
-      fetchEmployees(apiBaseUrl);
+      if (response.data.success) {
+        showAlert(`RFID successfully assigned to ${rfidAssignment.employee.firstName} ${rfidAssignment.employee.lastName}`, 'success');
+        closeRfidAssignmentModal();
+        fetchEmployees(apiBaseUrl);
+      }
     } catch (apiError) {
       if (apiError.response?.data?.assignedTo) {
         setRfidAssignment(prev => ({
           ...prev,
           mode: 'confirm',
-          scannedUid: uid.match(/.{1,2}/g).join(' ').toUpperCase(),
+          scannedUid: uid,
           existingAssignment: apiError.response.data.assignedTo
         }));
       } else {
-        alert(apiError.response?.data?.message || 'Error assigning RFID');
+        showAlert(apiError.response?.data?.message || 'Error assigning RFID', 'error');
       }
     }
   };
 
   const handleConfirmReassignment = async () => {
     try {
-      await axios.post(`${apiBaseUrl}/api/rfid/assign`, {
+      const response = await axios.post(`${apiBaseUrl}/api/rfid/assign`, {
         employeeId: rfidAssignment.employee.employeeId,
         rfidUid: rfidAssignment.scannedUid
       });
 
-      showSuccessMessage(`RFID successfully reassigned to ${rfidAssignment.employee.firstName} ${rfidAssignment.employee.lastName}`);
-      closeRfidAssignmentModal();
-      fetchEmployees(apiBaseUrl);
+      if (response.data.success) {
+        showAlert(`RFID successfully reassigned to ${rfidAssignment.employee.firstName} ${rfidAssignment.employee.lastName}`, 'success');
+        closeRfidAssignmentModal();
+        fetchEmployees(apiBaseUrl);
+      }
     } catch (error) {
       console.error('RFID reassignment error:', error);
-      alert(error.response?.data?.message || 'Error reassigning RFID');
-    }
-  };
-
-  const handleRemoveRfid = async () => {
-    const { employee, removalReason, otherReason } = rfidAssignment;
-    
-    if (!removalReason) {
-      alert('Please select a removal reason');
-      return;
-    }
-
-    if (removalReason === 'OTHER' && !otherReason) {
-      alert('Please specify the removal reason');
-      return;
-    }
-
-    try {
-      await axios.delete(`${apiBaseUrl}/api/rfid/assign/${employee.employeeId}`);
-
-      showSuccessMessage(`RFID assignment removed from ${employee.firstName} ${employee.lastName}`);
-      closeRfidAssignmentModal();
-      fetchEmployees(apiBaseUrl);
-    } catch (error) {
-      console.error('RFID removal error:', error);
-      alert(error.response?.data?.message || 'Error removing RFID assignment');
+      showAlert(error.response?.data?.message || 'Error reassigning RFID', 'error');
     }
   };
 
@@ -566,7 +638,7 @@ function Attendance() {
     const { employee, action, time } = manualAttendanceModal;
     
     if (!apiBaseUrl) {
-      alert('Backend connection not available.');
+      showAlert('Backend connection not available.', 'error');
       return;
     }
 
@@ -580,15 +652,25 @@ function Attendance() {
         action: action
       };
 
-      await axios.post(`${apiBaseUrl}/api/attendance/manual`, manualData);
+      const response = await axios.post(`${apiBaseUrl}/api/attendance/manual`, manualData);
 
-      showSuccessMessage(`${action === 'timein' ? 'Time In' : 'Time Out'} recorded successfully for ${employee.firstName} ${employee.lastName}`);
-      closeManualAttendanceModal();
-      fetchAttendance(apiBaseUrl, selectedDate);
-      fetchEmployees(apiBaseUrl);
+      if (response.data.success) {
+        showAlert(`${action === 'timein' ? 'Time In' : 'Time Out'} recorded successfully for ${employee.firstName} ${employee.lastName}`, 'success');
+        closeManualAttendanceModal();
+        fetchAttendance(apiBaseUrl, selectedDate);
+        fetchEmployees(apiBaseUrl);
+      }
     } catch (error) {
       console.error('Manual attendance error:', error);
-      alert(error.response?.data?.message || 'Error recording attendance');
+      const errorMessage = error.response?.data?.message || 'Error recording attendance';
+      
+      if (errorMessage.includes('10 minutes')) {
+        showAlert(`Time validation failed: ${errorMessage}`, 'warning');
+      } else if (errorMessage.includes('working hours')) {
+        showAlert(`Time restriction: ${errorMessage}`, 'warning');
+      } else {
+        showAlert(errorMessage, 'error');
+      }
     }
   };
 
@@ -598,24 +680,6 @@ function Attendance() {
       [field]: value
     }));
   };
-
-  const handleSearch = (term) => {
-    setSearchTerm(term);
-    applyFilters(employees, attendance, term, departmentFilter, positionFilter, selectedDate);
-  };
-
-  const handleDepartmentFilter = (dept) => {
-    setDepartmentFilter(dept);
-    applyFilters(employees, attendance, searchTerm, dept, positionFilter, selectedDate);
-  };
-
-  const handlePositionFilter = (position) => {
-    setPositionFilter(position);
-    applyFilters(employees, attendance, searchTerm, departmentFilter, position, selectedDate);
-  };
-
-  const departments = [...new Set(employees.map(emp => emp.department).filter(Boolean))].sort();
-  const positions = [...new Set(employees.map(emp => emp.position).filter(Boolean))].sort();
 
   useEffect(() => {
     const loadData = async () => {
@@ -643,13 +707,14 @@ function Attendance() {
     }
   }, [employees, apiBaseUrl, fetchTodaySummary]);
 
+  // Real-time updates interval
   useEffect(() => {
     if (!apiBaseUrl) return;
 
     const intervalId = setInterval(() => {
       fetchAttendance(apiBaseUrl, selectedDate);
       fetchTodaySummary(apiBaseUrl);
-    }, 30000);
+    }, 30000); // Auto-refresh every 30 seconds
 
     return () => clearInterval(intervalId);
   }, [apiBaseUrl, selectedDate, fetchAttendance, fetchTodaySummary]);
@@ -668,15 +733,31 @@ function Attendance() {
     }
   }, [employees, attendance, searchTerm, departmentFilter, positionFilter, selectedDate, sortConfig, applyFilters]);
 
+  // Listen for real-time RFID scan events
   useEffect(() => {
-    const interval = setInterval(() => {
-      const today = new Date().toISOString().split('T')[0];
-      if (today !== getMaxDate()) {
+    const handleRfidScanEvent = (event) => {
+      const scanData = event.detail;
+      console.log('RFID scan event received in Attendance:', scanData);
+      
+      // Update attendance data immediately
+      fetchAttendance(apiBaseUrl, selectedDate);
+      fetchTodaySummary(apiBaseUrl);
+      
+      // Show success alert
+      if (scanData.type === 'timein' || scanData.type === 'timeout') {
+        showAlert(
+          `${scanData.employeeName} - ${scanData.type === 'timein' ? 'Time In' : 'Time Out'} recorded successfully`,
+          'success'
+        );
       }
-    }, 60000);
+    };
 
-    return () => clearInterval(interval);
-  }, []);
+    window.addEventListener('rfid-scan', handleRfidScanEvent);
+
+    return () => {
+      window.removeEventListener('rfid-scan', handleRfidScanEvent);
+    };
+  }, [apiBaseUrl, selectedDate, fetchAttendance, fetchTodaySummary]);
 
   const retryConnection = async () => {
     cachedBaseUrl = null;
@@ -747,6 +828,16 @@ function Attendance() {
 
   return (
     <div className="p-4 h-full flex flex-col">
+      {/* Custom Alerts */}
+      {alert && (
+        <CustomAlert 
+          message={alert.message} 
+          type={alert.type} 
+          onClose={() => setAlert(null)} 
+        />
+      )}
+
+      {/* Success Message (legacy) */}
       {showSuccess && (
         <div className="fixed top-4 right-4 z-50 animate-fade-in">
           <div className="bg-[#400504] text-white px-6 py-3 rounded-lg shadow-lg border-l-4 border-[#cba235]">
@@ -769,31 +860,7 @@ function Attendance() {
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-4">
         <div className="mb-4 lg:mb-0">
           <h2 className="text-2xl lg:text-3xl font-bold text-[#400504]">Attendance Management</h2>
-          <div className="flex flex-wrap items-center gap-2 mt-2">
-            <span className={`flex items-center text-sm px-2 py-1 rounded ${
-              rfidStatus.connected 
-                ? 'bg-green-100 text-green-800' 
-                : 'bg-yellow-100 text-yellow-800'
-            }`}>
-              <FaServer className="mr-1" /> 
-              {rfidStatus.status}
-            </span>
-            <span className="flex items-center text-sm text-gray-600">
-              <FaCalendarDay className="mr-1" /> 
-              Selected: {new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-              {isToday(selectedDate) && (
-                <span className="ml-2 bg-green-100 text-green-800 px-2 py-1 rounded text-xs">
-                  Today
-                </span>
-              )}
-            </span>
-            {selectedDate < getTodayString() && (
-              <span className="flex items-center text-sm text-blue-600">
-                <FaExclamationTriangle className="mr-1" />
-                Historical view: Showing only employees with attendance records
-              </span>
-            )}
-          </div>
+          {/* Status section removed as requested */}
         </div>
         <div className="bg-white p-3 rounded-lg shadow-sm border">
           <div className="flex items-center space-x-3">
@@ -817,125 +884,7 @@ function Attendance() {
         </div>
       </div>
 
-      {todaySummary && todaySummary.summary && (
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-4">
-          <div className="bg-green-50 p-3 rounded-lg border border-green-200">
-            <div className="text-lg font-bold text-green-600">
-              {isToday(selectedDate) ? todaySummary.summary.present || 0 : filteredEmployees.length}
-            </div>
-            <div className="text-green-800 text-xs">
-              {isToday(selectedDate) ? 'Present Today' : 'Employees with Records'}
-            </div>
-          </div>
-          <div className="bg-red-50 p-3 rounded-lg border border-red-200">
-            <div className="text-lg font-bold text-red-600">
-              {isToday(selectedDate) ? todaySummary.summary.absent || 0 : 0}
-            </div>
-            <div className="text-red-800 text-xs">
-              {isToday(selectedDate) ? 'Absent Today' : 'No Absent Data'}
-            </div>
-          </div>
-          <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
-            <div className="text-lg font-bold text-blue-600">{todaySummary.summary.completed || 0}</div>
-            <div className="text-blue-800 text-xs">Completed Shift</div>
-          </div>
-          <div className="bg-yellow-50 p-3 rounded-lg border border-yellow-200">
-            <div className="text-lg font-bold text-yellow-600">{todaySummary.summary.late || 0}</div>
-            <div className="text-yellow-800 text-xs">Late Today</div>
-          </div>
-          <div className="bg-gray-50 p-3 rounded-lg border border-gray-200">
-            <div className="text-lg font-bold text-gray-600">{employees.length}</div>
-            <div className="text-gray-800 text-xs">Total Employees</div>
-          </div>
-        </div>
-      )}
-
-      <div className="bg-white p-4 rounded-lg shadow-sm border mb-4">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="relative">
-            <FaSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search employees..."
-              value={searchTerm}
-              onChange={(e) => handleSearch(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#cba235] text-sm"
-            />
-          </div>
-
-          <div>
-            <select
-              value={departmentFilter}
-              onChange={(e) => handleDepartmentFilter(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#400504] text-sm"
-            >
-              <option value="all">All Departments</option>
-              {departments.map(dept => (
-                <option key={dept} value={dept}>{dept}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <select
-              value={positionFilter}
-              onChange={(e) => handlePositionFilter(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#400504] text-sm"
-            >
-              <option value="all">All Positions</option>
-              {positions.map(position => (
-                <option key={position} value={position}>{position}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <select
-              value={sortConfig.key}
-              onChange={(e) => handleSort(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#400504] text-sm"
-            >
-              <option value="recentActivity">Sort by: Recent Activity</option>
-              <option value="name">Sort by: Name (A-Z)</option>
-              <option value="department">Sort by: Department</option>
-              <option value="position">Sort by: Position</option>
-              <option value="employeeId">Sort by: Employee ID</option>
-            </select>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap gap-2 mt-3">
-          {searchTerm && (
-            <span className="inline-flex items-center px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">
-              Search: "{searchTerm}"
-              <button onClick={() => handleSearch('')} className="ml-1 text-blue-600 hover:text-blue-800">
-                <FaTimes className="text-xs" />
-              </button>
-            </span>
-          )}
-          {departmentFilter !== 'all' && (
-            <span className="inline-flex items-center px-2 py-1 bg-green-100 text-green-800 text-xs rounded">
-              Department: {departmentFilter}
-              <button onClick={() => handleDepartmentFilter('all')} className="ml-1 text-green-600 hover:text-green-800">
-                <FaTimes className="text-xs" />
-              </button>
-            </span>
-          )}
-          {positionFilter !== 'all' && (
-            <span className="inline-flex items-center px-2 py-1 bg-purple-100 text-purple-800 text-xs rounded">
-              Position: {positionFilter}
-              <button onClick={() => handlePositionFilter('all')} className="ml-1 text-purple-600 hover:text-purple-800">
-                <FaTimes className="text-xs" />
-              </button>
-            </span>
-          )}
-          {!isToday(selectedDate) && (
-            <span className="inline-flex items-center px-2 py-1 bg-orange-100 text-orange-800 text-xs rounded">
-              Historical View: Only employees with attendance
-            </span>
-          )}
-        </div>
-      </div>
+      {/* Stats section removed as requested */}
 
       <AttendanceTable
         employees={filteredEmployees}
@@ -946,7 +895,8 @@ function Attendance() {
         onManualTimeIn={(employee) => openManualAttendanceModal(employee, 'timein')}
         onManualTimeOut={(employee) => openManualAttendanceModal(employee, 'timeout')}
         onAssignRfid={openRfidAssignmentModal}
-        onRemoveRfid={openRemoveRfidModal}
+        onRemoveRfid={handleRemoveRfid}
+        apiBaseUrl={apiBaseUrl}
       />
 
       <SummaryModal
@@ -979,6 +929,7 @@ function Attendance() {
         selectedDate={selectedDate}
         onTimeChange={(time) => setManualAttendanceModal(prev => ({ ...prev, time }))}
         onConfirm={handleManualAttendance}
+        apiBaseUrl={apiBaseUrl}
       />
     </div>
   );

@@ -1,3 +1,4 @@
+// frontend/src/components_ems/DashbaordEMS/EmployeeEMS.js
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
   ArchiveBoxIcon, 
@@ -6,7 +7,12 @@ import {
   UserGroupIcon,
   ArrowPathIcon,
   EyeIcon,
-  PencilSquareIcon
+  PencilSquareIcon,
+  ArrowLeftIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  FunnelIcon,
+  ArrowsUpDownIcon
 } from '@heroicons/react/24/outline';
 import ArchiveEmployeeModal from '../ActionEmp/ArchiveEmployeeModal';
 import ViewEmployeeModal from '../ActionEmp/ViewEmployeeModal';
@@ -14,6 +20,7 @@ import EditEmployeeModal from '../ActionEmp/EditEmployeeModal';
 
 const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
   const [employees, setEmployees] = useState([]);
+  const [departments, setDepartments] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [filteredEmployees, setFilteredEmployees] = useState([]);
   const [apiBaseUrl] = useState('http://localhost:5000');
@@ -22,19 +29,30 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('active');
+  const [viewMode, setViewMode] = useState('employees');
   
+  // Filter and Sort state
+  const [departmentFilter, setDepartmentFilter] = useState('all');
+  const [workTypeFilter, setWorkTypeFilter] = useState('all');
+  const [rfidFilter, setRfidFilter] = useState('all');
+  const [requirementsFilter, setRequirementsFilter] = useState('all');
+  const [sortConfig, setSortConfig] = useState({ key: 'firstName', direction: 'asc' });
+  const [showFilters, setShowFilters] = useState(false);
+
   const [archiveModalOpen, setArchiveModalOpen] = useState(false);
   const [viewModalOpen, setViewModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState(null);
 
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(5);
+
   const fetchEmployees = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      console.log('🔄 Fetching employees...');
       
-      // Fetch ALL employees without status filter
       const response = await fetch(`${apiBaseUrl}/api/employees?status=all`);
       
       if (!response.ok) {
@@ -42,11 +60,6 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
       }
       
       const result = await response.json();
-      console.log('✅ Employees fetched:', {
-        total: result.data?.length,
-        active: result.data?.filter(e => e.status === 'Active').length,
-        archived: result.data?.filter(e => e.status === 'Archived').length
-      });
       
       if (result.success) {
         setEmployees(result.data || []);
@@ -54,26 +67,37 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
         throw new Error(result.message || 'Failed to fetch employees');
       }
     } catch (error) {
-      console.error('❌ Error fetching employees:', error);
+      console.error('Error fetching employees:', error);
       setError(error.message);
     } finally {
       setLoading(false);
     }
   }, [apiBaseUrl]);
 
+  const fetchDepartments = useCallback(async () => {
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/departments`);
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success) {
+          setDepartments(result.data);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching departments:', error);
+    }
+  }, [apiBaseUrl]);
+
   useEffect(() => {
     fetchEmployees();
-  }, [fetchEmployees, refreshTrigger]);
+    fetchDepartments();
+  }, [fetchEmployees, fetchDepartments, refreshTrigger]);
 
+  // Filter and sort employees
   useEffect(() => {
-    console.log('🔄 Filtering employees:', {
-      total: employees.length,
-      activeTab: activeTab,
-      searchTerm: searchTerm
-    });
-
-    const filtered = employees.filter(employee => {
-      const matchesSearch = 
+    let filtered = employees.filter(employee => {
+      // Search term filter
+      const matchesSearch = searchTerm === '' || 
         (employee.employeeId && employee.employeeId.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (employee.firstName && employee.firstName.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (employee.lastName && employee.lastName.toLowerCase().includes(searchTerm.toLowerCase())) ||
@@ -81,20 +105,236 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
         (employee.position && employee.position.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (employee.email && employee.email.toLowerCase().includes(searchTerm.toLowerCase()));
 
+      // Status filter
       const matchesStatus = activeTab === 'active' 
         ? employee.status === 'Active'
         : employee.status === 'Archived';
 
-      return matchesSearch && matchesStatus;
+      // Department filter
+      const matchesDepartment = departmentFilter === 'all' || employee.department === departmentFilter;
+
+      // Work type filter
+      const matchesWorkType = workTypeFilter === 'all' || employee.workType === workTypeFilter;
+
+      // RFID filter
+      const matchesRfid = rfidFilter === 'all' || 
+        (rfidFilter === 'assigned' && employee.isRfidAssigned) ||
+        (rfidFilter === 'notAssigned' && !employee.isRfidAssigned);
+
+      // Requirements filter
+      const matchesRequirements = requirementsFilter === 'all' || 
+        (requirementsFilter === 'completed' && getRequirementsStatus(employee.requirements) === 'Completed') ||
+        (requirementsFilter === 'missing' && getRequirementsStatus(employee.requirements) === 'Missing');
+
+      return matchesSearch && matchesStatus && matchesDepartment && matchesWorkType && matchesRfid && matchesRequirements;
     });
 
-    console.log('✅ Filtered employees:', {
-      filteredCount: filtered.length,
-      activeTab: activeTab
-    });
+    // Sort employees
+    filtered = sortEmployees(filtered, sortConfig);
 
     setFilteredEmployees(filtered);
-  }, [searchTerm, employees, activeTab]);
+    setCurrentPage(1); // Reset to first page when filters change
+  }, [searchTerm, employees, activeTab, departmentFilter, workTypeFilter, rfidFilter, requirementsFilter, sortConfig]);
+
+  // Sort function
+  const sortEmployees = (employeesToSort, config) => {
+    return [...employeesToSort].sort((a, b) => {
+      let aValue, bValue;
+
+      switch (config.key) {
+        case 'employeeId':
+          aValue = a.employeeId || '';
+          bValue = b.employeeId || '';
+          break;
+        case 'firstName':
+          aValue = a.firstName || '';
+          bValue = b.firstName || '';
+          break;
+        case 'lastName':
+          aValue = a.lastName || '';
+          bValue = b.lastName || '';
+          break;
+        case 'department':
+          aValue = a.department || '';
+          bValue = b.department || '';
+          break;
+        case 'position':
+          aValue = a.position || '';
+          bValue = b.position || '';
+          break;
+        case 'workType':
+          aValue = a.workType || '';
+          bValue = b.workType || '';
+          break;
+        case 'rfid':
+          aValue = a.isRfidAssigned ? 1 : 0;
+          bValue = b.isRfidAssigned ? 1 : 0;
+          break;
+        case 'requirements':
+          aValue = getRequirementsStatus(a.requirements) === 'Completed' ? 1 : 0;
+          bValue = getRequirementsStatus(b.requirements) === 'Completed' ? 1 : 0;
+          break;
+        case 'status':
+          aValue = a.status || '';
+          bValue = b.status || '';
+          break;
+        default:
+          aValue = a.firstName || '';
+          bValue = b.firstName || '';
+      }
+
+      if (aValue < bValue) {
+        return config.direction === 'asc' ? -1 : 1;
+      }
+      if (aValue > bValue) {
+        return config.direction === 'asc' ? 1 : -1;
+      }
+      return 0;
+    });
+  };
+
+  const handleSort = (key) => {
+    setSortConfig(prevConfig => ({
+      key,
+      direction: prevConfig.key === key && prevConfig.direction === 'asc' ? 'desc' : 'asc'
+    }));
+  };
+
+  const getSortIcon = (key) => {
+    if (sortConfig.key !== key) return <ArrowsUpDownIcon className="h-3 w-3 text-gray-400" />;
+    return sortConfig.direction === 'asc' ? 
+      <span className="text-[#400504]">↑</span> : 
+      <span className="text-[#400504]">↓</span>;
+  };
+
+  const clearFilters = () => {
+    setSearchTerm('');
+    setDepartmentFilter('all');
+    setWorkTypeFilter('all');
+    setRfidFilter('all');
+    setRequirementsFilter('all');
+    setSortConfig({ key: 'firstName', direction: 'asc' });
+  };
+
+  const hasActiveFilters = () => {
+    return searchTerm !== '' || 
+           departmentFilter !== 'all' || 
+           workTypeFilter !== 'all' || 
+           rfidFilter !== 'all' || 
+           requirementsFilter !== 'all' ||
+           sortConfig.key !== 'firstName' ||
+           sortConfig.direction !== 'asc';
+  };
+
+  // Pagination logic
+  const indexOfLastItem = currentPage * itemsPerPage;
+  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+  const currentEmployees = filteredEmployees.slice(indexOfFirstItem, indexOfLastItem);
+  const totalPages = Math.ceil(filteredEmployees.length / itemsPerPage);
+
+  const handlePageChange = (pageNumber) => {
+    setCurrentPage(pageNumber);
+  };
+
+  const Pagination = () => {
+    if (totalPages <= 1) return null;
+
+    const pages = [];
+    let startPage = Math.max(1, currentPage - 1);
+    let endPage = Math.min(totalPages, startPage + 2);
+    
+    if (endPage - startPage < 2) {
+      startPage = Math.max(1, endPage - 2);
+    }
+    
+    for (let i = startPage; i <= endPage; i++) {
+      pages.push(i);
+    }
+
+    return (
+      <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 bg-white sm:px-6">
+        <div className="flex justify-between flex-1 sm:hidden">
+          <button
+            type="button"
+            onClick={() => handlePageChange(currentPage - 1)}
+            disabled={currentPage === 1}
+            className={`relative inline-flex items-center px-4 py-2 text-sm font-medium rounded-md ${
+              currentPage === 1
+                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-300'
+            }`}
+          >
+            Previous
+          </button>
+          <button
+            type="button"
+            onClick={() => handlePageChange(currentPage + 1)}
+            disabled={currentPage === totalPages}
+            className={`relative inline-flex items-center px-4 py-2 text-sm font-medium rounded-md ${
+              currentPage === totalPages
+                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-300'
+            }`}
+          >
+            Next
+          </button>
+        </div>
+        <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm text-gray-700">
+              Showing <span className="font-medium">{indexOfFirstItem + 1}</span> to{' '}
+              <span className="font-medium">
+                {Math.min(indexOfLastItem, filteredEmployees.length)}
+              </span> of{' '}
+              <span className="font-medium">{filteredEmployees.length}</span> employees
+            </p>
+          </div>
+          <div>
+            <nav className="isolate inline-flex -space-x-px rounded-md shadow-sm" aria-label="Pagination">
+              <button
+                type="button"
+                onClick={() => handlePageChange(currentPage - 1)}
+                disabled={currentPage === 1}
+                className={`relative inline-flex items-center rounded-l-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 ${
+                  currentPage === 1 ? 'cursor-not-allowed opacity-50' : ''
+                }`}
+              >
+                <span className="sr-only">Previous</span>
+                <ChevronLeftIcon className="h-4 w-4" aria-hidden="true" />
+              </button>
+              
+              {pages.map((page) => (
+                <button
+                  key={page}
+                  type="button"
+                  onClick={() => handlePageChange(page)}
+                  className={`relative inline-flex items-center px-4 py-2 text-sm font-semibold ${
+                    page === currentPage
+                      ? 'bg-[#400504] text-white focus:z-20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#400504]'
+                      : 'text-gray-900 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0'
+                  }`}
+                >
+                  {page}
+                </button>
+              ))}
+              
+              <button
+                type="button"
+                onClick={() => handlePageChange(currentPage + 1)}
+                disabled={currentPage === totalPages}
+                className={`relative inline-flex items-center rounded-r-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 ${
+                  currentPage === totalPages ? 'cursor-not-allowed opacity-50' : ''
+                }`}
+              >
+                <span className="sr-only">Next</span>
+                <ChevronRightIcon className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </nav>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const showSuccessMessage = (message) => {
     setSuccessMessage(message);
@@ -105,11 +345,9 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
     }, 5000);
   };
 
-  // Corrected requirements status check
   const getRequirementsStatus = (requirements) => {
     if (!requirements) return 'Missing';
     
-    // List of all requirement groups
     const requirementGroups = [
       'tinRequirements',
       'sssRequirements', 
@@ -135,7 +373,6 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
         if (group.notYetSubmitted === true) {
           hasNotYetSubmitted = true;
         } else {
-          // Check if any other option is selected
           const hasSelection = Object.entries(group).some(([key, value]) => 
             key !== 'notYetSubmitted' && value === true
           );
@@ -150,7 +387,6 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
       return 'Missing';
     }
 
-    // Return "Completed" only if ALL groups have selections
     return completedGroups === requirementGroups.length ? 'Completed' : 'Missing';
   };
 
@@ -177,7 +413,6 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
   };
 
   const handleEmployeeArchived = () => {
-    console.log('🔄 Refreshing employees after archive...');
     fetchEmployees();
     showSuccessMessage(`Employee ${selectedEmployee.firstName} ${selectedEmployee.lastName} archived successfully!`);
     setArchiveModalOpen(false);
@@ -185,7 +420,6 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
   };
 
   const handleEmployeeRestored = () => {
-    console.log('🔄 Refreshing employees after restore...');
     fetchEmployees();
     showSuccessMessage(`Employee ${selectedEmployee.firstName} ${selectedEmployee.lastName} restored successfully!`);
     setArchiveModalOpen(false);
@@ -227,9 +461,20 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
     return uid.toUpperCase();
   };
 
+  const handleViewDepartments = () => {
+    setViewMode('departments');
+  };
+
+  const handleBackToEmployees = () => {
+    setViewMode('employees');
+  };
+
   const activeEmployees = employees.filter(e => e.status === 'Active');
   const archivedEmployees = employees.filter(e => e.status === 'Archived');
   const rfidAssigned = employees.filter(e => e.isRfidAssigned).length;
+
+  // Get unique departments for filter dropdown
+  const uniqueDepartments = [...new Set(employees.map(emp => emp.department).filter(Boolean))].sort();
 
   if (loading) {
     return (
@@ -284,306 +529,585 @@ const EmployeeEMS = ({ onAddEmployee, onViewDepartment, refreshTrigger }) => {
         </div>
       )}
 
-      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
-        <div>
-          <h1 className="text-xl lg:text-2xl font-bold text-[#400504]">Employee Management</h1>
-          <p className="text-gray-600 text-sm">Manage all employee records and information</p>
-        </div>
-        
-        <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
-          <div className="relative flex-1 lg:flex-none lg:w-64">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
+      {viewMode === 'employees' ? (
+        <>
+          {/* Employee Management View */}
+          <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+            <div>
+              <h1 className="text-xl lg:text-2xl font-bold text-[#400504]">Employee Management</h1>
+              <p className="text-gray-600 text-sm">Manage all employee records and information</p>
             </div>
-            <input
-              type="text"
-              placeholder="Search employees..."
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors text-sm"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
+            
+            <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
+              <div className="relative flex-1 lg:flex-none lg:w-64">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                </div>
+                <input
+                  type="text"
+                  placeholder="Search employees..."
+                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors text-sm"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+              </div>
+              
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowFilters(!showFilters)}
+                  className={`flex items-center px-3 py-2 border rounded-lg transition-colors font-medium text-sm ${
+                    showFilters || hasActiveFilters()
+                      ? 'bg-[#400504] text-white border-[#400504]'
+                      : 'bg-white text-[#400504] border-[#400504] hover:bg-gray-50'
+                  }`}
+                >
+                  <FunnelIcon className="h-4 w-4 mr-2" />
+                  Filters
+                  {hasActiveFilters() && (
+                    <span className="ml-2 bg-[#cba235] text-[#400504] rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold">
+                      !
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={handleViewDepartments}
+                  className="flex items-center px-3 py-2 bg-white text-[#400504] border border-[#400504] rounded-lg hover:bg-gray-50 transition-colors font-medium text-sm"
+                >
+                  <BuildingOfficeIcon className="h-4 w-4 mr-2" />
+                  Departments
+                </button>
+                <button
+                  onClick={onAddEmployee}
+                  className="flex items-center px-3 py-2 bg-[#cba235] text-[#400504] rounded-lg hover:bg-[#dbb545] transition-colors font-medium text-sm"
+                >
+                  <PlusIcon className="h-4 w-4 mr-2" />
+                  Add Employee
+                </button>
+                <button
+                  onClick={fetchEmployees}
+                  className="flex items-center px-3 py-2 bg-gray-100 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-200 transition-colors font-medium text-sm"
+                  title="Refresh"
+                >
+                  <ArrowPathIcon className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
           </div>
-          
-          <div className="flex gap-2">
-            <button
-              onClick={onViewDepartment}
-              className="flex items-center px-3 py-2 bg-white text-[#400504] border border-[#400504] rounded-lg hover:bg-gray-50 transition-colors font-medium text-sm"
-            >
-              <BuildingOfficeIcon className="h-4 w-4 mr-2" />
-              Departments
-            </button>
-            <button
-              onClick={onAddEmployee}
-              className="flex items-center px-3 py-2 bg-[#cba235] text-[#400504] rounded-lg hover:bg-[#dbb545] transition-colors font-medium text-sm"
-            >
-              <PlusIcon className="h-4 w-4 mr-2" />
-              Add Employee
-            </button>
-            <button
-              onClick={fetchEmployees}
-              className="flex items-center px-3 py-2 bg-gray-100 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-200 transition-colors font-medium text-sm"
-              title="Refresh"
-            >
-              <ArrowPathIcon className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      </div>
 
-      <div className="border-b border-gray-200">
-        <nav className="-mb-px flex space-x-8">
-          <button
-            onClick={() => setActiveTab('active')}
-            className={`py-2 px-1 border-b-2 font-medium text-xs ${
-              activeTab === 'active'
-                ? 'border-[#cba235] text-[#400504]'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-          >
-            <UserGroupIcon className="h-4 w-4 inline mr-2" />
-            Active ({activeEmployees.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('archived')}
-            className={`py-2 px-1 border-b-2 font-medium text-xs ${
-              activeTab === 'archived'
-                ? 'border-[#cba235] text-[#400504]'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-          >
-            <ArchiveBoxIcon className="h-4 w-4 inline mr-2" />
-            Archived ({archivedEmployees.length})
-          </button>
-        </nav>
-      </div>
+          {/* Filters Section */}
+          {showFilters && (
+            <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4">
+                <h3 className="text-sm font-semibold text-gray-900 mb-2 sm:mb-0">Filter & Sort Employees</h3>
+                <button
+                  onClick={clearFilters}
+                  className="text-xs text-[#400504] hover:text-[#300303] font-medium"
+                >
+                  Clear All Filters
+                </button>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Department</label>
+                  <select
+                    value={departmentFilter}
+                    onChange={(e) => setDepartmentFilter(e.target.value)}
+                    className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 focus:ring-2 focus:ring-[#cba235] focus:border-transparent"
+                  >
+                    <option value="all">All Departments</option>
+                    {uniqueDepartments.map(dept => (
+                      <option key={dept} value={dept}>{dept}</option>
+                    ))}
+                  </select>
+                </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm">
-          <div className="flex items-center">
-            <div className="p-2 bg-blue-100 rounded-lg">
-              <UserGroupIcon className="h-5 w-5 text-blue-600" />
-            </div>
-            <div className="ml-3">
-              <p className="text-xs font-medium text-gray-600">Total</p>
-              <p className="text-lg font-bold text-gray-900">{employees.length}</p>
-            </div>
-          </div>
-        </div>
-        
-        <div className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm">
-          <div className="flex items-center">
-            <div className="p-2 bg-green-100 rounded-lg">
-              <svg className="h-5 w-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-            <div className="ml-3">
-              <p className="text-xs font-medium text-gray-600">Active</p>
-              <p className="text-lg font-bold text-gray-900">{activeEmployees.length}</p>
-            </div>
-          </div>
-        </div>
-        
-        <div className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm">
-          <div className="flex items-center">
-            <div className="p-2 bg-purple-100 rounded-lg">
-              <svg className="h-5 w-5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.132A8 8 0 008 4.07M3 15.364c.64-1.319 1-2.8 1-4.364 0-1.457.39-2.823 1.07-4" />
-              </svg>
-            </div>
-            <div className="ml-3">
-              <p className="text-xs font-medium text-gray-600">RFID</p>
-              <p className="text-lg font-bold text-gray-900">{rfidAssigned}</p>
-            </div>
-          </div>
-        </div>
-        
-        <div className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm">
-          <div className="flex items-center">
-            <div className="p-2 bg-gray-100 rounded-lg">
-              <ArchiveBoxIcon className="h-5 w-5 text-gray-600" />
-            </div>
-            <div className="ml-3">
-              <p className="text-xs font-medium text-gray-600">Archived</p>
-              <p className="text-lg font-bold text-gray-900">{archivedEmployees.length}</p>
-            </div>
-          </div>
-        </div>
-      </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Work Type</label>
+                  <select
+                    value={workTypeFilter}
+                    onChange={(e) => setWorkTypeFilter(e.target.value)}
+                    className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 focus:ring-2 focus:ring-[#cba235] focus:border-transparent"
+                  >
+                    <option value="all">All Types</option>
+                    <option value="Full-Time">Full-Time</option>
+                    <option value="Part-Time">Part-Time</option>
+                  </select>
+                </div>
 
-      <div className="bg-white rounded-lg shadow-sm border overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200 text-sm">
-            <thead className="bg-[#400504]">
-              <tr>
-                <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider">
-                  Employee
-                </th>
-                <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider">
-                  Department
-                </th>
-                <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider">
-                  Position
-                </th>
-                <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider">
-                  Work Type
-                </th>
-                <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider">
-                  RFID
-                </th>
-                <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider">
-                  Requirements
-                </th>
-                <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider">
-                  Status
-                </th>
-                <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {filteredEmployees.length > 0 ? (
-                filteredEmployees.map((employee) => (
-                  <tr key={employee._id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-3 py-2 whitespace-nowrap">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">RFID Status</label>
+                  <select
+                    value={rfidFilter}
+                    onChange={(e) => setRfidFilter(e.target.value)}
+                    className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 focus:ring-2 focus:ring-[#cba235] focus:border-transparent"
+                  >
+                    <option value="all">All RFID</option>
+                    <option value="assigned">Assigned</option>
+                    <option value="notAssigned">Not Assigned</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Requirements</label>
+                  <select
+                    value={requirementsFilter}
+                    onChange={(e) => setRequirementsFilter(e.target.value)}
+                    className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 focus:ring-2 focus:ring-[#cba235] focus:border-transparent"
+                  >
+                    <option value="all">All Status</option>
+                    <option value="completed">Completed</option>
+                    <option value="missing">Missing</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Active Filters Display */}
+              {hasActiveFilters() && (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {searchTerm && (
+                    <span className="inline-flex items-center px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">
+                      Search: "{searchTerm}"
+                      <button onClick={() => setSearchTerm('')} className="ml-1 text-blue-600 hover:text-blue-800">
+                        ×
+                      </button>
+                    </span>
+                  )}
+                  {departmentFilter !== 'all' && (
+                    <span className="inline-flex items-center px-2 py-1 bg-green-100 text-green-800 text-xs rounded">
+                      Dept: {departmentFilter}
+                      <button onClick={() => setDepartmentFilter('all')} className="ml-1 text-green-600 hover:text-green-800">
+                        ×
+                      </button>
+                    </span>
+                  )}
+                  {workTypeFilter !== 'all' && (
+                    <span className="inline-flex items-center px-2 py-1 bg-purple-100 text-purple-800 text-xs rounded">
+                      Work: {workTypeFilter}
+                      <button onClick={() => setWorkTypeFilter('all')} className="ml-1 text-purple-600 hover:text-purple-800">
+                        ×
+                      </button>
+                    </span>
+                  )}
+                  {rfidFilter !== 'all' && (
+                    <span className="inline-flex items-center px-2 py-1 bg-orange-100 text-orange-800 text-xs rounded">
+                      RFID: {rfidFilter === 'assigned' ? 'Assigned' : 'Not Assigned'}
+                      <button onClick={() => setRfidFilter('all')} className="ml-1 text-orange-600 hover:text-orange-800">
+                        ×
+                      </button>
+                    </span>
+                  )}
+                  {requirementsFilter !== 'all' && (
+                    <span className="inline-flex items-center px-2 py-1 bg-red-100 text-red-800 text-xs rounded">
+                      Req: {requirementsFilter === 'completed' ? 'Completed' : 'Missing'}
+                      <button onClick={() => setRequirementsFilter('all')} className="ml-1 text-red-600 hover:text-red-800">
+                        ×
+                      </button>
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="border-b border-gray-200">
+            <nav className="-mb-px flex space-x-8">
+              <button
+                onClick={() => setActiveTab('active')}
+                className={`py-2 px-1 border-b-2 font-medium text-xs ${
+                  activeTab === 'active'
+                    ? 'border-[#cba235] text-[#400504]'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                <UserGroupIcon className="h-4 w-4 inline mr-2" />
+                Active ({activeEmployees.length})
+              </button>
+              <button
+                onClick={() => setActiveTab('archived')}
+                className={`py-2 px-1 border-b-2 font-medium text-xs ${
+                  activeTab === 'archived'
+                    ? 'border-[#cba235] text-[#400504]'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                <ArchiveBoxIcon className="h-4 w-4 inline mr-2" />
+                Archived ({archivedEmployees.length})
+              </button>
+            </nav>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm">
+              <div className="flex items-center">
+                <div className="p-2 bg-blue-100 rounded-lg">
+                  <UserGroupIcon className="h-5 w-5 text-blue-600" />
+                </div>
+                <div className="ml-3">
+                  <p className="text-xs font-medium text-gray-600">Total</p>
+                  <p className="text-lg font-bold text-gray-900">{employees.length}</p>
+                </div>
+              </div>
+            </div>
+            
+            <div className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm">
+              <div className="flex items-center">
+                <div className="p-2 bg-green-100 rounded-lg">
+                  <svg className="h-5 w-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div className="ml-3">
+                  <p className="text-xs font-medium text-gray-600">Active</p>
+                  <p className="text-lg font-bold text-gray-900">{activeEmployees.length}</p>
+                </div>
+              </div>
+            </div>
+            
+            <div className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm">
+              <div className="flex items-center">
+                <div className="p-2 bg-purple-100 rounded-lg">
+                  <svg className="h-5 w-5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.132A8 8 0 008 4.07M3 15.364c.64-1.319 1-2.8 1-4.364 0-1.457.39-2.823 1.07-4" />
+                  </svg>
+                </div>
+                <div className="ml-3">
+                  <p className="text-xs font-medium text-gray-600">RFID</p>
+                  <p className="text-lg font-bold text-gray-900">{rfidAssigned}</p>
+                </div>
+              </div>
+            </div>
+            
+            <div className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm">
+              <div className="flex items-center">
+                <div className="p-2 bg-gray-100 rounded-lg">
+                  <ArchiveBoxIcon className="h-5 w-5 text-gray-600" />
+                </div>
+                <div className="ml-3">
+                  <p className="text-xs font-medium text-gray-600">Archived</p>
+                  <p className="text-lg font-bold text-gray-900">{archivedEmployees.length}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-sm border overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200 text-sm">
+                <thead className="bg-[#400504]">
+                  <tr>
+                    <th 
+                      scope="col" 
+                      className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider cursor-pointer hover:bg-[#300303] transition-colors"
+                      onClick={() => handleSort('employeeId')}
+                    >
                       <div className="flex items-center">
-                        <div className="flex-shrink-0 h-8 w-8">
-                          <div className="h-8 w-8 rounded-full bg-gradient-to-r from-[#400504] to-[#5a0705] flex items-center justify-center text-white text-xs font-bold border border-[#cba235]">
-                            {getInitials(employee.firstName, employee.lastName)}
-                          </div>
-                        </div>
-                        <div className="ml-3">
-                          <div className="text-sm font-medium text-gray-900">
-                            {employee.firstName} {employee.lastName}
-                          </div>
+                        <span>ID</span>
+                        {getSortIcon('employeeId')}
+                      </div>
+                    </th>
+                    <th 
+                      scope="col" 
+                      className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider cursor-pointer hover:bg-[#300303] transition-colors"
+                      onClick={() => handleSort('firstName')}
+                    >
+                      <div className="flex items-center">
+                        <span>Employee</span>
+                        {getSortIcon('firstName')}
+                      </div>
+                    </th>
+                    <th 
+                      scope="col" 
+                      className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider cursor-pointer hover:bg-[#300303] transition-colors"
+                      onClick={() => handleSort('department')}
+                    >
+                      <div className="flex items-center">
+                        <span>Department</span>
+                        {getSortIcon('department')}
+                      </div>
+                    </th>
+                    <th 
+                      scope="col" 
+                      className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider cursor-pointer hover:bg-[#300303] transition-colors"
+                      onClick={() => handleSort('position')}
+                    >
+                      <div className="flex items-center">
+                        <span>Position</span>
+                        {getSortIcon('position')}
+                      </div>
+                    </th>
+                    <th 
+                      scope="col" 
+                      className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider cursor-pointer hover:bg-[#300303] transition-colors"
+                      onClick={() => handleSort('workType')}
+                    >
+                      <div className="flex items-center">
+                        <span>Work Type</span>
+                        {getSortIcon('workType')}
+                      </div>
+                    </th>
+                    <th 
+                      scope="col" 
+                      className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider cursor-pointer hover:bg-[#300303] transition-colors"
+                      onClick={() => handleSort('rfid')}
+                    >
+                      <div className="flex items-center">
+                        <span>RFID</span>
+                        {getSortIcon('rfid')}
+                      </div>
+                    </th>
+                    <th 
+                      scope="col" 
+                      className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider cursor-pointer hover:bg-[#300303] transition-colors"
+                      onClick={() => handleSort('requirements')}
+                    >
+                      <div className="flex items-center">
+                        <span>Requirements</span>
+                        {getSortIcon('requirements')}
+                      </div>
+                    </th>
+                    <th 
+                      scope="col" 
+                      className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider cursor-pointer hover:bg-[#300303] transition-colors"
+                      onClick={() => handleSort('status')}
+                    >
+                      <div className="flex items-center">
+                        <span>Status</span>
+                        {getSortIcon('status')}
+                      </div>
+                    </th>
+                    <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-white uppercase tracking-wider">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {currentEmployees.length > 0 ? (
+                    currentEmployees.map((employee) => (
+                      <tr key={employee._id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-3 py-2 whitespace-nowrap">
                           <div className="text-xs text-gray-500 font-mono">
                             {employee.employeeId}
                           </div>
-                          <div className="text-xs text-gray-400 truncate max-w-[120px]">
-                            {employee.email}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <div className="flex items-center">
+                            <div className="flex-shrink-0 h-8 w-8">
+                              <div className="h-8 w-8 rounded-full bg-gradient-to-r from-[#400504] to-[#5a0705] flex items-center justify-center text-white text-xs font-bold border border-[#cba235]">
+                                {getInitials(employee.firstName, employee.lastName)}
+                              </div>
+                            </div>
+                            <div className="ml-3">
+                              <div className="text-sm font-medium text-gray-900">
+                                {employee.firstName} {employee.lastName}
+                              </div>
+                              <div className="text-xs text-gray-400 truncate max-w-[120px]">
+                                {employee.email}
+                              </div>
+                            </div>
                           </div>
+                        </td>
+
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <div className="text-sm text-gray-900">{employee.department}</div>
+                        </td>
+
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <div className="text-sm text-gray-900">{employee.position}</div>
+                          {employee.teachingLevel && employee.teachingLevel.length > 0 && (
+                            <div className="text-xs text-gray-500 mt-1">
+                              {employee.teachingLevel.slice(0, 2).join(', ')}
+                              {employee.teachingLevel.length > 2 && '...'}
+                            </div>
+                          )}
+                        </td>
+
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <span className={getWorkTypeBadge(employee.workType)}>
+                            {employee.workType}
+                          </span>
+                        </td>
+
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <span className={getRfidBadge(employee.rfidUid, employee.isRfidAssigned)}>
+                            {employee.rfidUid ? formatRfidUid(employee.rfidUid) : 'Not Assigned'}
+                          </span>
+                        </td>
+
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <span className={getRequirementsBadge(employee.requirements)}>
+                            {getRequirementsStatus(employee.requirements)}
+                          </span>
+                        </td>
+
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <span className={getStatusBadge(employee.status)}>
+                            {employee.status}
+                          </span>
+                        </td>
+
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <div className="flex items-center space-x-1">
+                            <button 
+                              onClick={() => handleViewEmployee(employee)}
+                              className="p-1 text-blue-600 hover:text-blue-800 transition-colors"
+                              title="View Employee"
+                            >
+                              <EyeIcon className="h-4 w-4" />
+                            </button>
+                            <button 
+                              onClick={() => handleEditEmployee(employee)}
+                              className="p-1 text-green-600 hover:text-green-800 transition-colors"
+                              title="Edit Employee"
+                            >
+                              <PencilSquareIcon className="h-4 w-4" />
+                            </button>
+                            <button 
+                              onClick={() => handleArchiveEmployee(employee)}
+                              className={`p-1 rounded transition-colors ${
+                                employee.status === 'Active' 
+                                  ? 'text-red-600 hover:text-red-800' 
+                                  : 'text-green-600 hover:text-green-800'
+                              }`}
+                              title={employee.status === 'Active' ? 'Archive Employee' : 'Restore Employee'}
+                            >
+                              <ArchiveBoxIcon className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan="9" className="px-6 py-8 text-center">
+                        <div className="flex flex-col items-center justify-center">
+                          <svg className="h-12 w-12 text-gray-400 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          <h3 className="text-base font-medium text-gray-900 mb-1">
+                            {searchTerm || hasActiveFilters() ? 'No employees found' : `No ${activeTab} employees`}
+                          </h3>
+                          <p className="text-gray-500 text-sm mb-3">
+                            {searchTerm || hasActiveFilters()
+                              ? 'Try adjusting your search or filter criteria'
+                              : activeTab === 'active' 
+                                ? 'Get started by adding your first employee'
+                                : 'No archived employees found'
+                            }
+                          </p>
+                          {(searchTerm || hasActiveFilters()) && (
+                            <button
+                              onClick={clearFilters}
+                              className="inline-flex items-center px-3 py-2 bg-[#400504] text-white rounded-lg hover:bg-[#300303] transition-colors font-medium text-sm"
+                            >
+                              Clear All Filters
+                            </button>
+                          )}
+                          {!searchTerm && !hasActiveFilters() && activeTab === 'active' && (
+                            <button
+                              onClick={onAddEmployee}
+                              className="inline-flex items-center px-3 py-2 bg-[#cba235] text-[#400504] rounded-lg hover:bg-[#dbb545] transition-colors font-medium text-sm"
+                            >
+                              <PlusIcon className="h-4 w-4 mr-2" />
+                              Add First Employee
+                            </button>
+                          )}
                         </div>
-                      </div>
-                    </td>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
 
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">{employee.department}</div>
-                    </td>
+            {/* Pagination Component */}
+            {filteredEmployees.length > itemsPerPage && <Pagination />}
 
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">{employee.position}</div>
-                      {employee.teachingLevel && employee.teachingLevel.length > 0 && (
-                        <div className="text-xs text-gray-500 mt-1">
-                          {employee.teachingLevel.slice(0, 2).join(', ')}
-                          {employee.teachingLevel.length > 2 && '...'}
-                        </div>
-                      )}
-                    </td>
-
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      <span className={getWorkTypeBadge(employee.workType)}>
-                        {employee.workType}
-                      </span>
-                    </td>
-
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      <span className={getRfidBadge(employee.rfidUid, employee.isRfidAssigned)}>
-                        {employee.rfidUid ? formatRfidUid(employee.rfidUid) : 'Not Assigned'}
-                      </span>
-                    </td>
-
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      <span className={getRequirementsBadge(employee.requirements)}>
-                        {getRequirementsStatus(employee.requirements)}
-                      </span>
-                    </td>
-
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      <span className={getStatusBadge(employee.status)}>
-                        {employee.status}
-                      </span>
-                    </td>
-
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      <div className="flex items-center space-x-1">
-                        <button 
-                          onClick={() => handleViewEmployee(employee)}
-                          className="p-1 text-blue-600 hover:text-blue-800 transition-colors"
-                          title="View Employee"
-                        >
-                          <EyeIcon className="h-4 w-4" />
-                        </button>
-                        <button 
-                          onClick={() => handleEditEmployee(employee)}
-                          className="p-1 text-green-600 hover:text-green-800 transition-colors"
-                          title="Edit Employee"
-                        >
-                          <PencilSquareIcon className="h-4 w-4" />
-                        </button>
-                        <button 
-                          onClick={() => handleArchiveEmployee(employee)}
-                          className={`p-1 rounded transition-colors ${
-                            employee.status === 'Active' 
-                              ? 'text-red-600 hover:text-red-800' 
-                              : 'text-green-600 hover:text-green-800'
-                          }`}
-                          title={employee.status === 'Active' ? 'Archive Employee' : 'Restore Employee'}
-                        >
-                          <ArchiveBoxIcon className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan="8" className="px-6 py-8 text-center">
-                    <div className="flex flex-col items-center justify-center">
-                      <svg className="h-12 w-12 text-gray-400 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      <h3 className="text-base font-medium text-gray-900 mb-1">
-                        {searchTerm ? 'No employees found' : `No ${activeTab} employees`}
-                      </h3>
-                      <p className="text-gray-500 text-sm mb-3">
-                        {searchTerm 
-                          ? 'Try adjusting your search terms'
-                          : activeTab === 'active' 
-                            ? 'Get started by adding your first employee'
-                            : 'No archived employees found'
-                        }
-                      </p>
-                      {!searchTerm && activeTab === 'active' && (
-                        <button
-                          onClick={onAddEmployee}
-                          className="inline-flex items-center px-3 py-2 bg-[#cba235] text-[#400504] rounded-lg hover:bg-[#dbb545] transition-colors font-medium text-sm"
-                        >
-                          <PlusIcon className="h-4 w-4 mr-2" />
-                          Add First Employee
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {filteredEmployees.length > 0 && (
-          <div className="px-4 py-2 bg-gray-50 border-t border-gray-200">
-            <div className="flex justify-between items-center text-xs text-gray-600">
-              <span>
-                Showing {filteredEmployees.length} of {activeTab === 'active' ? activeEmployees.length : archivedEmployees.length} {activeTab} employees
-              </span>
-              <span>Last updated: {new Date().toLocaleTimeString()}</span>
+            {filteredEmployees.length > 0 && (
+              <div className="px-4 py-2 bg-gray-50 border-t border-gray-200">
+                <div className="flex justify-between items-center text-xs text-gray-600">
+                  <span>
+                    Showing {currentEmployees.length} of {filteredEmployees.length} {activeTab} employees (Page {currentPage} of {totalPages})
+                  </span>
+                  <span>Last updated: {new Date().toLocaleTimeString()}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </>
+      ) : (
+        <>
+          {/* Departments View */}
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center space-x-4">
+              <button
+                onClick={handleBackToEmployees}
+                className="flex items-center px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+              >
+                <ArrowLeftIcon className="h-4 w-4 mr-2" />
+                Back to Employees
+              </button>
+              <div>
+                <h1 className="text-xl lg:text-2xl font-bold text-[#400504]">Department Management</h1>
+                <p className="text-gray-600 text-sm">View and manage all departments</p>
+              </div>
             </div>
           </div>
-        )}
-      </div>
+
+          <div className="bg-white rounded-lg shadow-sm border overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-[#400504]">
+                  <tr>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
+                      Department Name
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
+                      Description
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
+                      Created Date
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
+                      Employee Count
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {departments.map((department) => {
+                    const employeeCount = employees.filter(emp => 
+                      emp.department === department.name && emp.status === 'Active'
+                    ).length;
+                    
+                    return (
+                      <tr key={department._id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm font-medium text-gray-900">{department.name}</div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="text-sm text-gray-500">{department.description}</div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-gray-500">
+                            {new Date(department.createdAt).toLocaleDateString()}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm font-medium text-gray-900">
+                            {employeeCount} employees
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
 
       <ArchiveEmployeeModal
         isOpen={archiveModalOpen}

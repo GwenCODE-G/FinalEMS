@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 
+
+
 const BasicInfo = ({ formData, errors, isMinor, handleInputChange }) => {
   const [provinces, setProvinces] = useState([]);
   const [cities, setCities] = useState([]);

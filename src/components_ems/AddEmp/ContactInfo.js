@@ -1,14 +1,24 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import PhoneNumberValidation from './PhoneNumberValidation';
-import validator from 'validator';
+import { PHILIPPINE_ZIP_CODES, findZipCode } from './ZipCode';
 
 const ContactInfo = ({ formData, errors, handleInputChange }) => {
+  const [regions, setRegions] = useState([]);
   const [provinces, setProvinces] = useState([]);
   const [cities, setCities] = useState([]);
   const [barangays, setBarangays] = useState([]);
+  const [permanentRegions, setPermanentRegions] = useState([]);
   const [permanentProvinces, setPermanentProvinces] = useState([]);
   const [permanentCities, setPermanentCities] = useState([]);
   const [permanentBarangays, setPermanentBarangays] = useState([]);
+  const [availableZipCodes, setAvailableZipCodes] = useState([]);
+  const [permanentAvailableZipCodes, setPermanentAvailableZipCodes] = useState([]);
+  
+  // Search states for postal codes
+  const [currentZipSearch, setCurrentZipSearch] = useState('');
+  const [permanentZipSearch, setPermanentZipSearch] = useState('');
+  const [showCurrentZipDropdown, setShowCurrentZipDropdown] = useState(false);
+  const [showPermanentZipDropdown, setShowPermanentZipDropdown] = useState(false);
   
   const [phoneValidation, setPhoneValidation] = useState({
     contactNumber: { isValid: null, loading: false },
@@ -21,30 +31,146 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
     details: null
   });
 
-  const APPROVED_DOMAINS = [
-    'gmail.com',
-    'outlook.com',
-    'yahoo.com',
-    'icloud.com',
-    'aol.com',
-    'protonmail.com',
-    'zoho.com',
-    'gmx.com',
-    'email.com'
-  ];
+  // Get ALL zip codes from the entire database
+  const getAllZipCodes = () => {
+    const allZipCodes = [];
+    
+    Object.values(PHILIPPINE_ZIP_CODES).forEach(region => {
+      Object.entries(region).forEach(([province, cities]) => {
+        Object.entries(cities).forEach(([city, zipCode]) => {
+          allZipCodes.push({
+            value: zipCode,
+            label: `${city}, ${province} - ${zipCode}`,
+            city: city,
+            province: province,
+            zipCode: zipCode
+          });
+        });
+      });
+    });
+    
+    return allZipCodes.sort((a, b) => a.label.localeCompare(b.label));
+  };
 
-  const relationshipOptions = [
-    'Spouse',
-    'Parent',
-    'Aunt',
-    'Uncle',
-    'Cousin',
-    'Father-in-law',
-    'Mother-in-law',
-    'Brother-in-law',
-    'Sister-in-law',
-    'Guardian'
-  ];
+  // Filter zip codes based on search
+  const filterZipCodes = (zipCodes, searchTerm) => {
+    if (!searchTerm) return zipCodes;
+    
+    const searchLower = searchTerm.toLowerCase();
+    return zipCodes.filter(zip => 
+      zip.city.toLowerCase().includes(searchLower) ||
+      zip.province.toLowerCase().includes(searchLower) ||
+      zip.zipCode.includes(searchTerm)
+    );
+  };
+
+  // Simple function to find zip code by city name
+  const findZipCodeByCity = (cityName) => {
+    if (!cityName) return '';
+    
+    for (const region of Object.values(PHILIPPINE_ZIP_CODES)) {
+      for (const province of Object.values(region)) {
+        for (const [city, zipCode] of Object.entries(province)) {
+          if (city.toLowerCase().includes(cityName.toLowerCase()) || 
+              cityName.toLowerCase().includes(city.toLowerCase())) {
+            return zipCode;
+          }
+        }
+      }
+    }
+    return '';
+  };
+
+  // Simplified email validation - Remove complex validation that's causing issues
+  const validateEmail = async (email) => {
+    if (!email || email.trim().length < 3) {
+      setEmailValidation({ isValid: null, loading: false, details: null });
+      return;
+    }
+
+    setEmailValidation({ isValid: null, loading: true, details: null });
+
+    // Simple email format validation without external checks
+    const isValidFormat = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+    
+    if (!isValidFormat) {
+      setEmailValidation({
+        isValid: false,
+        loading: false,
+        details: {
+          reason: 'Invalid email format'
+        }
+      });
+      return;
+    }
+
+    // If format is valid, consider it acceptable
+    setEmailValidation({
+      isValid: true,
+      loading: false,
+      details: {
+        is_valid_format: true,
+        reason: 'Valid email format'
+      }
+    });
+  };
+
+  // Update available zip codes when current address changes
+  useEffect(() => {
+    // Always show all zip codes initially
+    setAvailableZipCodes(getAllZipCodes());
+    
+    // Auto-select zip code if city is selected
+    if (formData.currentAddress?.city) {
+      const zipCode = findZipCodeByCity(formData.currentAddress.city);
+      if (zipCode && !formData.currentAddress?.postalCode) {
+        handleInputChange({
+          target: {
+            name: 'currentAddress.postalCode',
+            value: zipCode
+          }
+        });
+      }
+    }
+  }, [formData.currentAddress?.city]);
+
+  // Update available zip codes when permanent address changes
+  useEffect(() => {
+    if (!formData.sameAsCurrent) {
+      // Always show all zip codes initially
+      setPermanentAvailableZipCodes(getAllZipCodes());
+      
+      // Auto-select zip code if city is selected
+      if (formData.permanentAddress?.city) {
+        const zipCode = findZipCodeByCity(formData.permanentAddress.city);
+        if (zipCode && !formData.permanentAddress?.postalCode) {
+          handleInputChange({
+            target: {
+              name: 'permanentAddress.postalCode',
+              value: zipCode
+            }
+          });
+        }
+      }
+    }
+  }, [formData.permanentAddress?.city, formData.sameAsCurrent]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (showCurrentZipDropdown && !event.target.closest('.current-postal-dropdown')) {
+        setShowCurrentZipDropdown(false);
+      }
+      if (showPermanentZipDropdown && !event.target.closest('.permanent-postal-dropdown')) {
+        setShowPermanentZipDropdown(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showCurrentZipDropdown, showPermanentZipDropdown]);
 
   useEffect(() => {
     if (!formData.emergencyContact?.type) {
@@ -56,149 +182,6 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
       });
     }
   }, [formData.emergencyContact?.type, handleInputChange]);
-
-  const validateEmail = async (email) => {
-    if (!email || email.trim().length < 3) {
-      setEmailValidation({ isValid: null, loading: false, details: null });
-      return;
-    }
-
-    setEmailValidation({ isValid: null, loading: true, details: null });
-
-    await new Promise(resolve => setTimeout(resolve, 300));
-
-    try {
-      const isValidFormat = validator.isEmail(email);
-      
-      if (!isValidFormat) {
-        setEmailValidation({
-          isValid: false,
-          loading: false,
-          details: {
-            is_valid_format: { value: false },
-            is_approved_domain: { value: false },
-            reason: 'Invalid email format'
-          }
-        });
-        return;
-      }
-
-      const domain = email.split('@')[1];
-      const isApprovedDomain = APPROVED_DOMAINS.includes(domain) || domain.endsWith('.edu.ph');
-      
-      if (!isApprovedDomain) {
-        setEmailValidation({
-          isValid: false,
-          loading: false,
-          details: {
-            is_valid_format: { value: true },
-            is_approved_domain: { value: false },
-            reason: 'Email domain not accepted. Please use Gmail, Outlook, Yahoo, or other approved providers.'
-          }
-        });
-        return;
-      }
-
-      const isDisposable = await checkDisposableEmail(email);
-      
-      if (isDisposable) {
-        setEmailValidation({
-          isValid: false,
-          loading: false,
-          details: {
-            is_valid_format: { value: true },
-            is_approved_domain: { value: true },
-            is_disposable_email: { value: true },
-            reason: 'Temporary/disposable emails are not accepted'
-          }
-        });
-        return;
-      }
-
-      const emailType = domain.endsWith('.edu.ph') ? 'educational' : 'personal';
-      
-      setEmailValidation({
-        isValid: true,
-        loading: false,
-        details: {
-          is_valid_format: { value: true },
-          is_approved_domain: { value: true },
-          is_disposable_email: { value: false },
-          email_type: emailType,
-          is_edu_ph: domain.endsWith('.edu.ph'),
-          domain: domain
-        }
-      });
-      
-    } catch (error) {
-      console.error('Error validating email:', error);
-      const isValidFormat = validator.isEmail(email);
-      setEmailValidation({
-        isValid: isValidFormat,
-        loading: false,
-        details: {
-          is_valid_format: { value: isValidFormat },
-          is_approved_domain: { value: false },
-          reason: 'Validation error'
-        }
-      });
-    }
-  };
-
-  const checkDisposableEmail = async (email) => {
-    const disposableDomains = [
-      'tempmail.com', 'guerrillamail.com', 'mailinator.com', '10minutemail.com',
-      'yopmail.com', 'throwawaymail.com', 'fakeinbox.com', 'temp-mail.org',
-      'trashmail.com', 'dispostable.com', 'getairmail.com', 'tmpmail.org',
-      'sharklasers.com', 'guerrillamail.net', 'grr.la', 'guerrillamail.info',
-      'maildrop.cc', 'throwawaymail.com', 'fake-mail.com', 'tempinbox.com'
-    ];
-    
-    const domain = email.split('@')[1];
-    return disposableDomains.some(disposable => 
-      domain.includes(disposable) || disposable.includes(domain)
-    );
-  };
-
-  useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      if (formData.email) {
-        validateEmail(formData.email);
-      } else {
-        setEmailValidation({ isValid: null, loading: false, details: null });
-      }
-    }, 800);
-    
-    return () => clearTimeout(timeoutId);
-  }, [formData.email]);
-
-  const handleContactNumberChange = (phoneNumber, isValid) => {
-    handleInputChange({
-      target: {
-        name: 'contactNumber',
-        value: phoneNumber
-      }
-    });
-    
-    setPhoneValidation(prev => ({
-      ...prev,
-      contactNumber: { ...prev.contactNumber, isValid, loading: false }
-    }));
-  };
-
-  const handleEmergencyMobileChange = (phoneNumber, isValid) => {
-    handleInputChange({
-      target: {
-        name: 'emergencyContact.mobile',
-        value: phoneNumber
-      }
-    });
-    
-    setPhoneValidation(prev => ({
-      ...prev,
-      emergencyMobile: { ...prev.emergencyMobile, isValid, loading: false }
-    }));
-  };
 
   const getPhoneValidationStatus = (fieldName) => {
     const validation = phoneValidation[fieldName];
@@ -241,19 +224,57 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
     const value = e.target.value;
     handleInputChange(e);
 
-    if (value && !validator.isEmail(value)) {
+    if (value && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
       setEmailValidation({
         isValid: false,
         loading: false,
         details: {
-          is_valid_format: { value: false },
-          is_approved_domain: { value: false },
           reason: 'Invalid email format'
         }
       });
     } else if (!value) {
       setEmailValidation({ isValid: null, loading: false, details: null });
     }
+  };
+
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (formData.email) {
+        validateEmail(formData.email);
+      } else {
+        setEmailValidation({ isValid: null, loading: false, details: null });
+      }
+    }, 800);
+    
+    return () => clearTimeout(timeoutId);
+  }, [formData.email]);
+
+  const handleContactNumberChange = (phoneNumber, isValid) => {
+    handleInputChange({
+      target: {
+        name: 'contactNumber',
+        value: phoneNumber
+      }
+    });
+    
+    setPhoneValidation(prev => ({
+      ...prev,
+      contactNumber: { ...prev.contactNumber, isValid, loading: false }
+    }));
+  };
+
+  const handleEmergencyMobileChange = (phoneNumber, isValid) => {
+    handleInputChange({
+      target: {
+        name: 'emergencyContact.mobile',
+        value: phoneNumber
+      }
+    });
+    
+    setPhoneValidation(prev => ({
+      ...prev,
+      emergencyMobile: { ...prev.emergencyMobile, isValid, loading: false }
+    }));
   };
 
   const handleStreetInput = (e) => {
@@ -381,6 +402,48 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
     });
   };
 
+  const handlePostalCodeChange = (e) => {
+    handleInputChange({
+      target: {
+        name: 'currentAddress.postalCode',
+        value: e.target.value
+      }
+    });
+  };
+
+  const handlePermanentPostalCodeChange = (e) => {
+    handleInputChange({
+      target: {
+        name: 'permanentAddress.postalCode',
+        value: e.target.value
+      }
+    });
+  };
+
+  // Handle current postal code selection
+  const handleCurrentPostalSelect = (zipCode) => {
+    handleInputChange({
+      target: {
+        name: 'currentAddress.postalCode',
+        value: zipCode
+      }
+    });
+    setCurrentZipSearch(zipCode); // Set the selected value directly in search field
+    setShowCurrentZipDropdown(false);
+  };
+
+  // Handle permanent postal code selection
+  const handlePermanentPostalSelect = (zipCode) => {
+    handleInputChange({
+      target: {
+        name: 'permanentAddress.postalCode',
+        value: zipCode
+      }
+    });
+    setPermanentZipSearch(zipCode); // Set the selected value directly in search field
+    setShowPermanentZipDropdown(false);
+  };
+
   // FIXED: Properly handle checkbox group changes for requirements
   const handleCheckboxGroup = (groupName, option, isChecked) => {
     const currentRequirements = formData.requirements || {};
@@ -418,45 +481,98 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
     });
   };
 
+  // Fetch regions for current address
   useEffect(() => {
-    const fetchProvinces = async () => {
+    const fetchRegions = async () => {
       try {
-        const response = await fetch('https://psgc.gitlab.io/api/provinces/');
+        const response = await fetch('https://psgc.gitlab.io/api/regions/');
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
         const data = await response.json();
-        const sortedProvinces = data.sort((a, b) => a.name.localeCompare(b.name));
-        setProvinces(sortedProvinces);
+        const sortedRegions = data.sort((a, b) => a.name.localeCompare(b.name));
+        setRegions(sortedRegions);
       } catch (error) {
-        console.error('Error fetching provinces:', error);
-        setProvinces([]);
+        console.error('Error fetching regions:', error);
+        setRegions([]);
       }
     };
-    fetchProvinces();
+    fetchRegions();
   }, []);
 
+  // Fetch regions for permanent address
   useEffect(() => {
-    const fetchPermanentProvinces = async () => {
+    const fetchPermanentRegions = async () => {
       try {
-        const response = await fetch('https://psgc.gitlab.io/api/provinces/');
+        const response = await fetch('https://psgc.gitlab.io/api/regions/');
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
         const data = await response.json();
-        const sortedProvinces = data.sort((a, b) => a.name.localeCompare(b.name));
-        setPermanentProvinces(sortedProvinces);
+        const sortedRegions = data.sort((a, b) => a.name.localeCompare(b.name));
+        setPermanentRegions(sortedRegions);
       } catch (error) {
-        console.error('Error fetching permanent provinces:', error);
-        setPermanentProvinces([]);
+        console.error('Error fetching permanent regions:', error);
+        setPermanentRegions([]);
       }
     };
     
     if (!formData.sameAsCurrent) {
-      fetchPermanentProvinces();
+      fetchPermanentRegions();
     }
   }, [formData.sameAsCurrent]);
 
+  // Fetch provinces for current address based on selected region
+  useEffect(() => {
+    if (formData.currentAddress?.regionCode) {
+      const fetchProvinces = async () => {
+        try {
+          const response = await fetch(`https://psgc.gitlab.io/api/regions/${formData.currentAddress.regionCode}/provinces/`);
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+          const data = await response.json();
+          const sortedProvinces = data.sort((a, b) => a.name.localeCompare(b.name));
+          setProvinces(sortedProvinces);
+        } catch (error) {
+          console.error('Error fetching provinces:', error);
+          setProvinces([]);
+        }
+      };
+      fetchProvinces();
+    } else {
+      setProvinces([]);
+      setCities([]);
+      setBarangays([]);
+    }
+  }, [formData.currentAddress?.regionCode]);
+
+  // Fetch provinces for permanent address based on selected region
+  useEffect(() => {
+    if (formData.permanentAddress?.regionCode && !formData.sameAsCurrent) {
+      const fetchPermanentProvinces = async () => {
+        try {
+          const response = await fetch(`https://psgc.gitlab.io/api/regions/${formData.permanentAddress.regionCode}/provinces/`);
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+          const data = await response.json();
+          const sortedProvinces = data.sort((a, b) => a.name.localeCompare(b.name));
+          setPermanentProvinces(sortedProvinces);
+        } catch (error) {
+          console.error('Error fetching permanent provinces:', error);
+          setPermanentProvinces([]);
+        }
+      };
+      fetchPermanentProvinces();
+    } else {
+      setPermanentProvinces([]);
+      setPermanentCities([]);
+      setPermanentBarangays([]);
+    }
+  }, [formData.permanentAddress?.regionCode, formData.sameAsCurrent]);
+
+  // Fetch cities for current address based on selected province
   useEffect(() => {
     if (formData.currentAddress?.provinceCode) {
       const fetchCities = async () => {
@@ -480,6 +596,7 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
     }
   }, [formData.currentAddress?.provinceCode]);
 
+  // Fetch cities for permanent address based on selected province
   useEffect(() => {
     if (formData.permanentAddress?.provinceCode && !formData.sameAsCurrent) {
       const fetchPermanentCities = async () => {
@@ -503,6 +620,7 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
     }
   }, [formData.permanentAddress?.provinceCode, formData.sameAsCurrent]);
 
+  // Fetch barangays for current address based on selected city
   useEffect(() => {
     if (formData.currentAddress?.cityCode) {
       const fetchBarangays = async () => {
@@ -525,6 +643,7 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
     }
   }, [formData.currentAddress?.cityCode]);
 
+  // Fetch barangays for permanent address based on selected city
   useEffect(() => {
     if (formData.permanentAddress?.cityCode && !formData.sameAsCurrent) {
       const fetchPermanentBarangays = async () => {
@@ -547,22 +666,36 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
     }
   }, [formData.permanentAddress?.cityCode, formData.sameAsCurrent]);
 
-  const handleProvinceChange = (e) => {
-    const selectedProvince = provinces.find(p => p.code === e.target.value);
+  // Handle region change for current address
+  const handleRegionChange = (e) => {
+    const selectedRegion = regions.find(r => r.code === e.target.value);
     
     handleInputChange({
       target: {
+        name: 'currentAddress.region',
+        value: selectedRegion?.name || ''
+      }
+    });
+    handleInputChange({
+      target: {
+        name: 'currentAddress.regionCode',
+        value: e.target.value
+      }
+    });
+    
+    // Clear dependent fields
+    handleInputChange({
+      target: {
         name: 'currentAddress.province',
-        value: selectedProvince?.name || ''
+        value: ''
       }
     });
     handleInputChange({
       target: {
         name: 'currentAddress.provinceCode',
-        value: e.target.value
+        value: ''
       }
     });
-    
     handleInputChange({
       target: {
         name: 'currentAddress.city',
@@ -595,6 +728,119 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
     });
   };
 
+  // Handle region change for permanent address
+  const handlePermanentRegionChange = (e) => {
+    const selectedRegion = permanentRegions.find(r => r.code === e.target.value);
+    
+    handleInputChange({
+      target: {
+        name: 'permanentAddress.region',
+        value: selectedRegion?.name || ''
+      }
+    });
+    handleInputChange({
+      target: {
+        name: 'permanentAddress.regionCode',
+        value: e.target.value
+      }
+    });
+    
+    // Clear dependent fields
+    handleInputChange({
+      target: {
+        name: 'permanentAddress.province',
+        value: ''
+      }
+    });
+    handleInputChange({
+      target: {
+        name: 'permanentAddress.provinceCode',
+        value: ''
+      }
+    });
+    handleInputChange({
+      target: {
+        name: 'permanentAddress.city',
+        value: ''
+      }
+    });
+    handleInputChange({
+      target: {
+        name: 'permanentAddress.cityCode',
+        value: ''
+      }
+    });
+    handleInputChange({
+      target: {
+        name: 'permanentAddress.barangay',
+        value: ''
+      }
+    });
+    handleInputChange({
+      target: {
+        name: 'permanentAddress.barangayCode',
+        value: ''
+      }
+    });
+    handleInputChange({
+      target: {
+        name: 'permanentAddress.postalCode',
+        value: ''
+      }
+    });
+  };
+
+  // Handle province change for current address
+  const handleProvinceChange = (e) => {
+    const selectedProvince = provinces.find(p => p.code === e.target.value);
+    
+    handleInputChange({
+      target: {
+        name: 'currentAddress.province',
+        value: selectedProvince?.name || ''
+      }
+    });
+    handleInputChange({
+      target: {
+        name: 'currentAddress.provinceCode',
+        value: e.target.value
+      }
+    });
+    
+    // Clear dependent fields
+    handleInputChange({
+      target: {
+        name: 'currentAddress.city',
+        value: ''
+      }
+    });
+    handleInputChange({
+      target: {
+        name: 'currentAddress.cityCode',
+        value: ''
+      }
+    });
+    handleInputChange({
+      target: {
+        name: 'currentAddress.barangay',
+        value: ''
+      }
+    });
+    handleInputChange({
+      target: {
+        name: 'currentAddress.barangayCode',
+        value: ''
+      }
+    });
+    handleInputChange({
+      target: {
+        name: 'currentAddress.postalCode',
+        value: ''
+      }
+    });
+  };
+
+  // Handle province change for permanent address
   const handlePermanentProvinceChange = (e) => {
     const selectedProvince = permanentProvinces.find(p => p.code === e.target.value);
     
@@ -611,6 +857,7 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
       }
     });
     
+    // Clear dependent fields
     handleInputChange({
       target: {
         name: 'permanentAddress.city',
@@ -793,6 +1040,106 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
       </div>
     );
   };
+
+  // Custom Postal Code Dropdown Component
+  const PostalCodeDropdown = ({ 
+    value, 
+    onChange, 
+    zipCodes, 
+    searchTerm, 
+    onSearchChange, 
+    showDropdown, 
+    onToggleDropdown,
+    onSelect,
+    className = '',
+    placeholder = "Search postal code..."
+  }) => {
+    const filteredZipCodes = filterZipCodes(zipCodes, searchTerm);
+    
+    return (
+      <div className={`relative ${className}`}>
+        <div className="relative">
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(e) => {
+              onSearchChange(e.target.value);
+              onToggleDropdown(true);
+            }}
+            onFocus={() => onToggleDropdown(true)}
+            placeholder={placeholder}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
+          />
+          <button
+            type="button"
+            onClick={() => onToggleDropdown(!showDropdown)}
+            className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+          >
+            ▼
+          </button>
+        </div>
+        
+        {showDropdown && (
+          <div className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-hidden">
+            {/* Search input inside dropdown */}
+            <div className="p-2 border-b border-gray-200">
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => onSearchChange(e.target.value)}
+                placeholder="Search city, province, or zip code..."
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-[#cba235] focus:border-transparent"
+                autoFocus
+              />
+            </div>
+            
+            {/* Results count */}
+            <div className="px-3 py-1 text-xs text-gray-500 bg-gray-50 border-b border-gray-200">
+              {filteredZipCodes.length} results found
+            </div>
+            
+            {/* Dropdown options */}
+            <div className="overflow-y-auto" style={{ maxHeight: '200px' }}>
+              {filteredZipCodes.length > 0 ? (
+                filteredZipCodes.map((zipOption) => (
+                  <div
+                    key={zipOption.value}
+                    onClick={() => {
+                      onSelect(zipOption.value);
+                    }}
+                    className={`px-3 py-2 cursor-pointer hover:bg-gray-100 border-b border-gray-100 last:border-b-0 ${
+                      value === zipOption.value ? 'bg-blue-50 text-blue-700' : ''
+                    }`}
+                  >
+                    <div className="font-medium text-sm">{zipOption.city}</div>
+                    <div className="text-xs text-gray-600">{zipOption.province}</div>
+                    <div className="text-xs font-semibold text-gray-800">Zip: {zipOption.zipCode}</div>
+                  </div>
+                ))
+              ) : (
+                <div className="px-3 py-4 text-center text-gray-500 text-sm">
+                  No matching zip codes found
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const relationshipOptions = [
+    'Spouse',
+    'Parent',
+    'Aunt',
+    'Uncle',
+    'Cousin',
+    'Father-in-law',
+    'Mother-in-law',
+    'Brother-in-law',
+    'Sister-in-law',
+    'Guardian'
+  ];
 
   return (
     <div className="space-y-6">
@@ -1334,7 +1681,33 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
           </div>
         </div>
         
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div>
+            <label htmlFor="currentRegion" className="block text-sm font-medium text-gray-700 mb-1">
+              Region *
+            </label>
+            <select
+              id="currentRegion"
+              name="currentAddress.regionCode"
+              value={formData.currentAddress?.regionCode || ''}
+              onChange={handleRegionChange}
+              className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors ${
+                errors.currentAddress?.region ? 'border-red-500 bg-red-50' : 'border-gray-300'
+              }`}
+              required
+            >
+              <option value="">Select Region</option>
+              {regions.map(region => (
+                <option key={region.code} value={region.code}>
+                  {region.name}
+                </option>
+              ))}
+            </select>
+            {errors.currentAddress?.region && (
+              <p className="text-red-500 text-xs mt-1">{errors.currentAddress.region}</p>
+            )}
+          </div>
+          
           <div>
             <label htmlFor="currentProvince" className="block text-sm font-medium text-gray-700 mb-1">
               Province *
@@ -1344,12 +1717,15 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
               name="currentAddress.provinceCode"
               value={formData.currentAddress?.provinceCode || ''}
               onChange={handleProvinceChange}
-              className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors ${
+              className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors disabled:bg-gray-100 disabled:cursor-not-allowed ${
                 errors.currentAddress?.province ? 'border-red-500 bg-red-50' : 'border-gray-300'
               }`}
               required
+              disabled={!formData.currentAddress?.regionCode}
             >
-              <option value="">Select Province</option>
+              <option value="">
+                {!formData.currentAddress?.regionCode ? 'Select region first' : 'Select Province'}
+              </option>
               {provinces.map(province => (
                 <option key={province.code} value={province.code}>
                   {province.name}
@@ -1421,19 +1797,27 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
         </div>
         
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
+          <div className="current-postal-dropdown">
             <label htmlFor="currentPostalCode" className="block text-sm font-medium text-gray-700 mb-1">
-              Postal Code
+              Postal Code *
             </label>
-            <input
-              id="currentPostalCode"
-              name="currentAddress.postalCode"
-              type="text"
+            <PostalCodeDropdown
               value={formData.currentAddress?.postalCode || ''}
-              onChange={handleNumberInput}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
-              placeholder="Postal code"
+              onChange={handlePostalCodeChange}
+              zipCodes={availableZipCodes}
+              searchTerm={currentZipSearch}
+              onSearchChange={setCurrentZipSearch}
+              showDropdown={showCurrentZipDropdown}
+              onToggleDropdown={setShowCurrentZipDropdown}
+              onSelect={handleCurrentPostalSelect}
+              placeholder="Search postal code..."
             />
+            {errors.currentAddress?.postalCode && (
+              <p className="text-red-500 text-xs mt-1">{errors.currentAddress.postalCode}</p>
+            )}
+            <p className="text-xs text-gray-500 mt-1">
+              {availableZipCodes.length} total zip codes available
+            </p>
           </div>
           
           <div>
@@ -1549,7 +1933,33 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
             </div>
           </div>
           
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <label htmlFor="permanentRegion" className="block text-sm font-medium text-gray-700 mb-1">
+                Region *
+              </label>
+              <select
+                id="permanentRegion"
+                name="permanentAddress.regionCode"
+                value={formData.permanentAddress?.regionCode || ''}
+                onChange={handlePermanentRegionChange}
+                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors ${
+                  errors.permanentAddress?.region ? 'border-red-500 bg-red-50' : 'border-gray-300'
+                }`}
+                required
+              >
+                <option value="">Select Region</option>
+                {permanentRegions.map(region => (
+                  <option key={region.code} value={region.code}>
+                    {region.name}
+                  </option>
+                ))}
+              </select>
+              {errors.permanentAddress?.region && (
+                <p className="text-red-500 text-xs mt-1">{errors.permanentAddress.region}</p>
+              )}
+            </div>
+            
             <div>
               <label htmlFor="permanentProvince" className="block text-sm font-medium text-gray-700 mb-1">
                 Province *
@@ -1559,12 +1969,15 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
                 name="permanentAddress.provinceCode"
                 value={formData.permanentAddress?.provinceCode || ''}
                 onChange={handlePermanentProvinceChange}
-                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors ${
+                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors disabled:bg-gray-100 disabled:cursor-not-allowed ${
                   errors.permanentAddress?.province ? 'border-red-500 bg-red-50' : 'border-gray-300'
                 }`}
                 required
+                disabled={!formData.permanentAddress?.regionCode}
               >
-                <option value="">Select Province</option>
+                <option value="">
+                  {!formData.permanentAddress?.regionCode ? 'Select region first' : 'Select Province'}
+                </option>
                 {permanentProvinces.map(province => (
                   <option key={province.code} value={province.code}>
                     {province.name}
@@ -1636,19 +2049,27 @@ const ContactInfo = ({ formData, errors, handleInputChange }) => {
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
+            <div className="permanent-postal-dropdown">
               <label htmlFor="permanentPostalCode" className="block text-sm font-medium text-gray-700 mb-1">
-                Postal Code
+                Postal Code *
               </label>
-              <input
-                id="permanentPostalCode"
-                name="permanentAddress.postalCode"
-                type="text"
+              <PostalCodeDropdown
                 value={formData.permanentAddress?.postalCode || ''}
-                onChange={handleNumberInput}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#cba235] focus:border-transparent transition-colors"
-                placeholder="Postal code"
+                onChange={handlePermanentPostalCodeChange}
+                zipCodes={permanentAvailableZipCodes}
+                searchTerm={permanentZipSearch}
+                onSearchChange={setPermanentZipSearch}
+                showDropdown={showPermanentZipDropdown}
+                onToggleDropdown={setShowPermanentZipDropdown}
+                onSelect={handlePermanentPostalSelect}
+                placeholder="Search postal code..."
               />
+              {errors.permanentAddress?.postalCode && (
+                <p className="text-red-500 text-xs mt-1">{errors.permanentAddress.postalCode}</p>
+              )}
+              <p className="text-xs text-gray-500 mt-1">
+                {permanentAvailableZipCodes.length} total zip codes available
+              </p>
             </div>
             
             <div>

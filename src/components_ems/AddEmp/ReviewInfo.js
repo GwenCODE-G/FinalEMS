@@ -1,7 +1,6 @@
 import React from 'react';
 
 const ReviewInfo = ({ formData, isMinor, generateEmployeeId }) => {
-  // Format date for display
   const formatDate = (dateString) => {
     if (!dateString) return 'Not provided';
     try {
@@ -16,13 +15,11 @@ const ReviewInfo = ({ formData, isMinor, generateEmployeeId }) => {
     }
   };
 
-  // Format time for display
   const formatTime = (timeString) => {
     if (!timeString) return 'Not set';
     return timeString;
   };
 
-  // Format work schedule for display
   const formatWorkSchedule = (schedule) => {
     const activeDays = Object.entries(schedule || {})
       .filter(([_, daySchedule]) => daySchedule.active)
@@ -33,7 +30,6 @@ const ReviewInfo = ({ formData, isMinor, generateEmployeeId }) => {
     return activeDays.length > 0 ? activeDays : ['No active days'];
   };
 
-  // Format address for display
   const formatAddress = (address) => {
     if (!address) return 'Not provided';
     
@@ -44,14 +40,13 @@ const ReviewInfo = ({ formData, isMinor, generateEmployeeId }) => {
       address.barangay,
       address.city,
       address.province,
-      address.postalCode,
+      address.postalCode ? `Postal Code: ${address.postalCode}` : '',
       address.country
     ].filter(part => part && part.trim() !== '');
     
     return parts.join(', ');
   };
 
-  // Format emergency contact for display
   const formatEmergencyContact = (contact) => {
     if (!contact) return 'Not provided';
     
@@ -62,7 +57,6 @@ const ReviewInfo = ({ formData, isMinor, generateEmployeeId }) => {
     return `${name} (${relationship}) - ${number || 'No number provided'}`;
   };
 
-  // Format teaching levels for display
   const formatTeachingLevels = (levels) => {
     if (!levels || !Array.isArray(levels) || levels.length === 0) {
       return 'None selected';
@@ -70,18 +64,15 @@ const ReviewInfo = ({ formData, isMinor, generateEmployeeId }) => {
     return levels.join(', ');
   };
 
-  // Format requirements status based on actual user selection
   const formatRequirementStatus = (requirements) => {
     if (!requirements || Object.keys(requirements).length === 0) {
       return 'No requirements selected';
     }
     
-    // If "notYetSubmitted" is checked, show that
     if (requirements.notYetSubmitted) {
       return 'Not yet submitted';
     }
     
-    // Otherwise show the selected options
     const selectedOptions = Object.keys(requirements).filter(key => requirements[key] === true);
     
     if (selectedOptions.length === 0) {
@@ -89,7 +80,6 @@ const ReviewInfo = ({ formData, isMinor, generateEmployeeId }) => {
     }
     
     return selectedOptions.map(option => {
-      // Format the option names to be more readable
       const formattedOption = option
         .replace(/([A-Z])/g, ' $1')
         .replace(/^./, str => str.toUpperCase())
@@ -114,12 +104,11 @@ const ReviewInfo = ({ formData, isMinor, generateEmployeeId }) => {
         </p>
         {isMinor && (
           <div className="mt-2 p-2 bg-amber-100 text-amber-800 rounded text-sm">
-            ⚠️ This employee is a minor. Please ensure proper documentation and parental consent.
+            This employee is a minor. Please ensure proper documentation and parental consent.
           </div>
         )}
       </div>
 
-      {/* Basic Information */}
       <div className="border border-gray-200 rounded-lg">
         <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
           <h4 className="text-lg font-semibold text-[#400504]">Basic Information</h4>
@@ -168,7 +157,6 @@ const ReviewInfo = ({ formData, isMinor, generateEmployeeId }) => {
         </div>
       </div>
 
-      {/* Contact Information */}
       <div className="border border-gray-200 rounded-lg">
         <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
           <h4 className="text-lg font-semibold text-[#400504]">Contact Information</h4>
@@ -189,7 +177,6 @@ const ReviewInfo = ({ formData, isMinor, generateEmployeeId }) => {
         </div>
       </div>
 
-      {/* Government IDs */}
       <div className="border border-gray-200 rounded-lg">
         <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
           <h4 className="text-lg font-semibold text-[#400504]">Government IDs</h4>
@@ -214,7 +201,6 @@ const ReviewInfo = ({ formData, isMinor, generateEmployeeId }) => {
         </div>
       </div>
 
-      {/* Government ID Requirements */}
       <div className="border border-gray-200 rounded-lg">
         <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
           <h4 className="text-lg font-semibold text-[#400504]">Government ID Requirements</h4>
@@ -257,7 +243,6 @@ const ReviewInfo = ({ formData, isMinor, generateEmployeeId }) => {
         </div>
       </div>
 
-      {/* BPLO Requirements */}
       <div className="border border-gray-200 rounded-lg">
         <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
           <h4 className="text-lg font-semibold text-[#400504]">BPLO Requirements (CSJDM)</h4>
@@ -300,7 +285,6 @@ const ReviewInfo = ({ formData, isMinor, generateEmployeeId }) => {
         </div>
       </div>
 
-      {/* Occupational Permit Requirements */}
       <div className="border border-gray-200 rounded-lg">
         <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
           <h4 className="text-lg font-semibold text-[#400504]">Occupational Permit Requirements</h4>
@@ -343,7 +327,6 @@ const ReviewInfo = ({ formData, isMinor, generateEmployeeId }) => {
         </div>
       </div>
 
-      {/* Address Information */}
       <div className="border border-gray-200 rounded-lg">
         <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
           <h4 className="text-lg font-semibold text-[#400504]">Address Information</h4>
@@ -361,13 +344,12 @@ const ReviewInfo = ({ formData, isMinor, generateEmployeeId }) => {
           )}
           {formData.sameAsCurrent && (
             <div className="bg-blue-50 p-3 rounded">
-              <p className="text-sm text-blue-700">✓ Permanent address is same as current address</p>
+              <p className="text-sm text-blue-700">Permanent address is same as current address</p>
             </div>
           )}
         </div>
       </div>
 
-      {/* Employment Information */}
       <div className="border border-gray-200 rounded-lg">
         <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
           <h4 className="text-lg font-semibold text-[#400504]">Employment Information</h4>
@@ -414,7 +396,6 @@ const ReviewInfo = ({ formData, isMinor, generateEmployeeId }) => {
         </div>
       </div>
 
-      {/* Confirmation */}
       <div className="bg-green-50 border border-green-200 rounded-lg p-4">
         <div className="flex items-center">
           <svg className="h-5 w-5 text-green-400 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">

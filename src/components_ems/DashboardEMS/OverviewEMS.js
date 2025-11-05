@@ -8,11 +8,12 @@ import {
   FaClock,
   FaBuilding,
   FaCalendarAlt,
-  FaSync,
   FaSignInAlt,
   FaSignOutAlt,
   FaUserPlus,
-  FaIdCard as FaRfid
+  FaIdCard as FaRfid,
+  FaChevronLeft,
+  FaChevronRight
 } from 'react-icons/fa';
 
 const OverviewEMS = () => {
@@ -29,6 +30,9 @@ const OverviewEMS = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [apiBaseUrl, setApiBaseUrl] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(5);
+  const [dataLoaded, setDataLoaded] = useState(false); // New state to track initial load
 
   // Function to find working backend URL
   const findWorkingBackend = async () => {
@@ -38,6 +42,7 @@ const OverviewEMS = () => {
       try {
         const response = await fetch(`http://localhost:${port}/api/test`, {
           method: 'GET',
+          timeout: 5000
         });
         if (response.ok) {
           console.log(`Backend found on port ${port}`);
@@ -51,12 +56,15 @@ const OverviewEMS = () => {
     throw new Error('No backend server found. Please start the backend server.');
   };
 
-  const fetchOverviewData = useCallback(async () => {
+  const fetchOverviewData = useCallback(async (isInitialLoad = false) => {
     try {
-      setLoading(true);
+      if (isInitialLoad) {
+        setLoading(true);
+        setDataLoaded(false);
+      }
       setError(null);
       
-      console.log('Fetching overview data...');
+      console.log('Fetching overview data...', isInitialLoad ? 'Initial load' : 'Auto-refresh');
 
       // Initialize API base URL if not set
       let baseUrl = apiBaseUrl;
@@ -71,10 +79,9 @@ const OverviewEMS = () => {
         throw new Error(`Failed to fetch employees: ${employeesResponse.status}`);
       }
       const employeesData = await employeesResponse.json();
-      console.log('Employees API response:', employeesData);
+      console.log('Employees fetched:', employeesData.success ? employeesData.data.length : 0);
       
       const employees = employeesData.success ? employeesData.data : [];
-      console.log('Employees fetched:', employees.length);
 
       // Fetch today's attendance
       let todayAttendance = [];
@@ -110,7 +117,6 @@ const OverviewEMS = () => {
       } catch (deptError) {
         console.log('Departments fetch failed:', deptError);
       }
-      console.log('Departments fetched:', departments.length);
 
       // Fetch recent RFID assignments (new employees with RFID)
       let recentAssignments = [];
@@ -130,35 +136,13 @@ const OverviewEMS = () => {
 
       // Calculate RFID assigned from employees data
       const rfidAssigned = employees.filter(emp => emp.isRfidAssigned || emp.rfidUid).length;
-      console.log('RFID assigned calculated:', rfidAssigned);
 
       // Calculate statistics
       const totalEmployees = employees.length;
-      
       const presentToday = todayAttendance.filter(a => a.timeIn).length;
       const absentToday = Math.max(0, totalEmployees - presentToday);
       const completedShifts = todayAttendance.filter(a => a.timeOut).length;
       const lateToday = todayAttendance.filter(a => a.status === 'Late').length;
-      
-      console.log('Calculated stats:', {
-        totalEmployees,
-        presentToday,
-        absentToday,
-        departments: departments.length,
-        rfidAssigned,
-        lateToday,
-        completedShifts
-      });
-
-      setStats({
-        totalEmployees,
-        presentToday,
-        absentToday,
-        departments: departments.length,
-        rfidAssigned,
-        lateToday,
-        completedShifts
-      });
 
       // Create comprehensive recent activity including time in/out and new employees
       const activityItems = [];
@@ -222,41 +206,183 @@ const OverviewEMS = () => {
         });
       });
 
-      // Sort all activities by timestamp (newest first) and take top 10
-      const recentActivity = activityItems
-        .sort((a, b) => b.timestamp - a.timestamp)
-        .slice(0, 10);
+      // Sort all activities by timestamp (newest first)
+      const sortedActivities = activityItems
+        .sort((a, b) => b.timestamp - a.timestamp);
 
-      console.log('Recent activity items:', recentActivity);
-      setRecentActivity(recentActivity);
+      console.log('Data loaded successfully. Activities:', sortedActivities.length);
+
+      // Update state in a single batch to prevent partial renders
+      setStats({
+        totalEmployees,
+        presentToday,
+        absentToday,
+        departments: departments.length,
+        rfidAssigned,
+        lateToday,
+        completedShifts
+      });
+
+      setRecentActivity(sortedActivities);
+      
+      if (isInitialLoad) {
+        setDataLoaded(true);
+      }
+      
+      // Only reset to first page on initial load, not on refreshes
+      if (isInitialLoad || currentPage === 1) {
+        setCurrentPage(1);
+      }
 
     } catch (error) {
       console.error('Error fetching overview data:', error);
       setError(error.message);
       
-      // Set default values on error
-      setStats({
-        totalEmployees: 0,
-        presentToday: 0,
-        absentToday: 0,
-        departments: 0,
-        rfidAssigned: 0,
-        lateToday: 0,
-        completedShifts: 0
-      });
-      setRecentActivity([]);
+      // Only set default values if this is the initial load and we have no data
+      if (!dataLoaded) {
+        setStats({
+          totalEmployees: 0,
+          presentToday: 0,
+          absentToday: 0,
+          departments: 0,
+          rfidAssigned: 0,
+          lateToday: 0,
+          completedShifts: 0
+        });
+        setRecentActivity([]);
+      }
     } finally {
-      setLoading(false);
+      if (isInitialLoad) {
+        setLoading(false);
+      }
     }
-  }, [apiBaseUrl]);
+  }, [apiBaseUrl, currentPage, dataLoaded]);
 
+  // Initial load
   useEffect(() => {
-    fetchOverviewData();
+    fetchOverviewData(true); // true indicates this is the initial load
+  }, []); // Empty dependency array - only run on mount
+
+  // Auto-refresh - only start after initial load is complete
+  useEffect(() => {
+    if (!dataLoaded) return; // Don't start auto-refresh until initial data is loaded
     
-    // Refresh data every 30 seconds
-    const interval = setInterval(fetchOverviewData, 30000);
+    const interval = setInterval(() => {
+      fetchOverviewData(false); // false indicates this is an auto-refresh
+    }, 30000);
+    
     return () => clearInterval(interval);
-  }, [fetchOverviewData]);
+  }, [dataLoaded, fetchOverviewData]);
+
+  // Pagination logic for recent activity
+  const indexOfLastItem = currentPage * itemsPerPage;
+  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+  const currentActivities = recentActivity.slice(indexOfFirstItem, indexOfLastItem);
+  const totalPages = Math.ceil(recentActivity.length / itemsPerPage);
+
+  const handlePageChange = (pageNumber) => {
+    setCurrentPage(pageNumber);
+  };
+
+  const Pagination = () => {
+    if (totalPages <= 1) return null;
+
+    const pages = [];
+    let startPage = Math.max(1, currentPage - 1);
+    let endPage = Math.min(totalPages, startPage + 2);
+    
+    if (endPage - startPage < 2) {
+      startPage = Math.max(1, endPage - 2);
+    }
+    
+    for (let i = startPage; i <= endPage; i++) {
+      pages.push(i);
+    }
+
+    return (
+      <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 bg-white sm:px-6">
+        <div className="flex justify-between flex-1 sm:hidden">
+          <button
+            type="button"
+            onClick={() => handlePageChange(currentPage - 1)}
+            disabled={currentPage === 1}
+            className={`relative inline-flex items-center px-4 py-2 text-sm font-medium rounded-md ${
+              currentPage === 1
+                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-300'
+            }`}
+          >
+            Previous
+          </button>
+          <button
+            type="button"
+            onClick={() => handlePageChange(currentPage + 1)}
+            disabled={currentPage === totalPages}
+            className={`relative inline-flex items-center px-4 py-2 text-sm font-medium rounded-md ${
+              currentPage === totalPages
+                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-300'
+            }`}
+          >
+            Next
+          </button>
+        </div>
+        <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm text-gray-700">
+              Showing <span className="font-medium">{indexOfFirstItem + 1}</span> to{' '}
+              <span className="font-medium">
+                {Math.min(indexOfLastItem, recentActivity.length)}
+              </span> of{' '}
+              <span className="font-medium">{recentActivity.length}</span> activities
+            </p>
+          </div>
+          <div>
+            <nav className="isolate inline-flex -space-x-px rounded-md shadow-sm" aria-label="Pagination">
+              <button
+                type="button"
+                onClick={() => handlePageChange(currentPage - 1)}
+                disabled={currentPage === 1}
+                className={`relative inline-flex items-center rounded-l-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 ${
+                  currentPage === 1 ? 'cursor-not-allowed opacity-50' : ''
+                }`}
+              >
+                <span className="sr-only">Previous</span>
+                <FaChevronLeft className="h-4 w-4" aria-hidden="true" />
+              </button>
+              
+              {pages.map((page) => (
+                <button
+                  key={page}
+                  type="button"
+                  onClick={() => handlePageChange(page)}
+                  className={`relative inline-flex items-center px-4 py-2 text-sm font-semibold ${
+                    page === currentPage
+                      ? 'bg-[#400504] text-white focus:z-20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#400504]'
+                      : 'text-gray-900 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0'
+                  }`}
+                >
+                  {page}
+                </button>
+              ))}
+              
+              <button
+                type="button"
+                onClick={() => handlePageChange(currentPage + 1)}
+                disabled={currentPage === totalPages}
+                className={`relative inline-flex items-center rounded-r-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 ${
+                  currentPage === totalPages ? 'cursor-not-allowed opacity-50' : ''
+                }`}
+              >
+                <span className="sr-only">Next</span>
+                <FaChevronRight className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </nav>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const StatCard = ({ icon: Icon, title, value, color, subtitle }) => (
     <div className="bg-white rounded-lg shadow-sm border p-6 hover:shadow-md transition-shadow">
@@ -278,10 +404,8 @@ const OverviewEMS = () => {
     
     try {
       const date = new Date(timeString);
-      // Convert to PH time (GMT+8)
-      const phTime = new Date(date.getTime() + (8 * 60 * 60 * 1000));
-      const hours = phTime.getHours();
-      const minutes = phTime.getMinutes().toString().padStart(2, '0');
+      const hours = date.getHours();
+      const minutes = date.getMinutes().toString().padStart(2, '0');
       const ampm = hours >= 12 ? 'PM' : 'AM';
       const displayHours = hours % 12 || 12;
       return `${displayHours}:${minutes} ${ampm}`;
@@ -363,13 +487,10 @@ const OverviewEMS = () => {
     }
   };
 
-  const handleRefresh = () => {
-    fetchOverviewData();
-  };
-
   const retryConnection = async () => {
     setApiBaseUrl(''); // Reset base URL to force rediscovery
-    await fetchOverviewData();
+    setDataLoaded(false);
+    await fetchOverviewData(true);
   };
 
   if (loading) {
@@ -381,7 +502,7 @@ const OverviewEMS = () => {
     );
   }
 
-  if (error) {
+  if (error && !dataLoaded) {
     return (
       <div className="p-6">
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-6 rounded relative">
@@ -397,7 +518,6 @@ const OverviewEMS = () => {
               onClick={retryConnection}
               className="flex items-center bg-[#400504] hover:bg-[#300303] text-white font-bold py-2 px-4 rounded"
             >
-              <FaSync className="mr-2" />
               Retry Connection
             </button>
           </div>
@@ -412,15 +532,7 @@ const OverviewEMS = () => {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
         <div>
           <h1 className="text-3xl font-bold text-[#400504]">Dashboard Overview</h1>
-       
         </div>
-        <button
-          onClick={handleRefresh}
-          className="flex items-center px-4 py-2 bg-[#400504] text-white rounded-md hover:bg-[#300303] transition-colors mt-4 sm:mt-0"
-        >
-          <FaSync className="mr-2" />
-          Refresh Data
-        </button>
       </div>
 
       {/* Main Statistics Grid */}
@@ -480,7 +592,7 @@ const OverviewEMS = () => {
         />
       </div>
 
-      {/* Recent Activity */}
+      {/* Recent Activity with Pagination */}
       <div className="bg-white rounded-lg shadow-sm border">
         <div className="px-6 py-4 border-b flex justify-between items-center">
           <h2 className="text-lg font-semibold text-[#400504] flex items-center">
@@ -497,9 +609,9 @@ const OverviewEMS = () => {
           </span>
         </div>
         <div className="p-6">
-          {recentActivity.length > 0 ? (
+          {currentActivities.length > 0 ? (
             <div className="space-y-3">
-              {recentActivity.map((activity, index) => (
+              {currentActivities.map((activity, index) => (
                 <div key={index} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors border">
                   <div className="flex items-center space-x-4">
                     <div className={`p-3 rounded-full ${getActivityColor(activity.type)}`}>
@@ -543,6 +655,9 @@ const OverviewEMS = () => {
             </div>
           )}
         </div>
+        
+        {/* Pagination Component */}
+        {recentActivity.length > itemsPerPage && <Pagination />}
       </div>
 
       {/* Summary Section */}

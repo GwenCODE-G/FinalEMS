@@ -29,7 +29,19 @@ const setupAutoTimeoutJob = () => {
     timezone: "Asia/Manila"
   });
 
-  console.log('Automatic time out jobs scheduled (7:05 PM and 8:00 PM Philippines Time)');
+  cron.schedule('0 21 * * *', async () => {
+    try {
+      console.log('Running absent status calculation job at 9:00 PM Philippines Time...');
+      const result = await Attendance.calculateAbsentStatus();
+      console.log('Absent status calculation job completed:', result);
+    } catch (error) {
+      console.error('Absent status calculation job failed:', error);
+    }
+  }, {
+    timezone: "Asia/Manila"
+  });
+
+  console.log('Automatic time out jobs scheduled (7:05 PM, 8:00 PM, and 9:00 PM Philippines Time)');
 };
 
 module.exports = setupAutoTimeoutJob;

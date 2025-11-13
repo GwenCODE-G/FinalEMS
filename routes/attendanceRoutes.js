@@ -1415,6 +1415,25 @@ router.get('/leave/check/:employeeId', async (req, res) => {
     });
   }
 });
+// Add this route to calculate absent status manually
+router.post('/calculate-absent', async (req, res) => {
+  try {
+    const result = await Attendance.calculateAbsentStatus();
+    
+    res.json({
+      success: true,
+      message: result.message,
+      data: result
+    });
+  } catch (error) {
+    console.error('Error calculating absent status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error calculating absent status',
+      error: error.message
+    });
+  }
+});
 
 router.get('/stats/department', async (req, res) => {
     try {

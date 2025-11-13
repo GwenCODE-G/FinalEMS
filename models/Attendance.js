@@ -5,6 +5,16 @@ const moment = require('moment-timezone');
 const PH_TIMEZONE = 'Asia/Manila';
 const PH_TIMEZONE_DISPLAY = 'Philippine Standard Time (PST)';
 
+// Working Hours Configuration
+const WORKING_HOURS = {
+  START_HOUR: 6,
+  START_MINUTE: 0,
+  END_HOUR: 19,
+  END_MINUTE: 0,
+  TIMEIN_CUTOFF_HOUR: 17,
+  TIMEIN_CUTOFF_MINUTE: 0
+};
+
 const attendanceSchema = new mongoose.Schema({
   employeeId: {
     type: String,
@@ -29,10 +39,24 @@ const attendanceSchema = new mongoose.Schema({
     index: true
   },
   timeIn: {
-    type: Date
+    type: Date,
+    set: function(timeIn) {
+      // Convert to PST when setting timeIn
+      if (timeIn) {
+        return moment(timeIn).tz(PH_TIMEZONE).toDate();
+      }
+      return timeIn;
+    }
   },
   timeOut: {
-    type: Date
+    type: Date,
+    set: function(timeOut) {
+      // Convert to PST when setting timeOut
+      if (timeOut) {
+        return moment(timeOut).tz(PH_TIMEZONE).toDate();
+      }
+      return timeOut;
+    }
   },
   status: {
     type: String,
@@ -191,15 +215,6 @@ function getCurrentPHDateTime() {
 
 // ==================== WORKING HOURS VALIDATION ====================
 
-const WORKING_HOURS = {
-  START_HOUR: 6,
-  START_MINUTE: 0,
-  END_HOUR: 19,
-  END_MINUTE: 0,
-  TIMEIN_CUTOFF_HOUR: 17,
-  TIMEIN_CUTOFF_MINUTE: 0
-};
-
 function isWithinWorkingHours(date) {
   const phMoment = moment(date).tz(PH_TIMEZONE);
   const hour = phMoment.hour();
@@ -302,13 +317,51 @@ attendanceSchema.virtual('phTimeInfo').get(function() {
     timezoneDisplay: this.timezoneDisplay || PH_TIMEZONE_DISPLAY,
     currentPHTime: getCurrentPhilippineTime().format('YYYY-MM-DD HH:mm:ss'),
     displayTimeIn: this.displayTimeIn,
-    displayTimeOut: this.displayTimeOut
+    displayTimeOut: this.displayTimeOut,
+    storedTimeIn: this.timeIn ? moment(this.timeIn).tz(PH_TIMEZONE).format() : null,
+    storedTimeOut: this.timeOut ? moment(this.timeOut).tz(PH_TIMEZONE).format() : null
   };
 });
 
 attendanceSchema.virtual('isOnLeave').get(function() {
   return this.status === 'In_Leave' || this.isLeaveRecord;
 });
+
+// ==================== NEW TIME PST HELPER METHODS ====================
+
+attendanceSchema.methods.getTimeInPST = function() {
+  if (!this.timeIn) return null;
+  return moment(this.timeIn).tz(PH_TIMEZONE).format('YYYY-MM-DD HH:mm:ss');
+};
+
+attendanceSchema.methods.getTimeOutPST = function() {
+  if (!this.timeOut) return null;
+  return moment(this.timeOut).tz(PH_TIMEZONE).format('YYYY-MM-DD HH:mm:ss');
+};
+
+attendanceSchema.methods.getTimeInObject = function() {
+  if (!this.timeIn) return null;
+  const phMoment = moment(this.timeIn).tz(PH_TIMEZONE);
+  return {
+    date: phMoment.toDate(),
+    formatted: phMoment.format('YYYY-MM-DD HH:mm:ss'),
+    display: formatTime(this.timeIn),
+    iso: phMoment.toISOString(),
+    timestamp: phMoment.valueOf()
+  };
+};
+
+attendanceSchema.methods.getTimeOutObject = function() {
+  if (!this.timeOut) return null;
+  const phMoment = moment(this.timeOut).tz(PH_TIMEZONE);
+  return {
+    date: phMoment.toDate(),
+    formatted: phMoment.format('YYYY-MM-DD HH:mm:ss'),
+    display: formatTime(this.timeOut),
+    iso: phMoment.toISOString(),
+    timestamp: phMoment.valueOf()
+  };
+};
 
 // ==================== METHODS ====================
 
@@ -492,7 +545,8 @@ attendanceSchema.methods.updateTimeOut = async function(timeOut, source = 'manua
     throw new Error(validation.reason);
   }
   
-  this.timeOut = timeOut;
+  // Convert to PST before saving
+  this.timeOut = moment(timeOut).tz(PH_TIMEZONE).toDate();
   this.timeOutSource = source;
   this.lastModified = getCurrentPHDateTime();
   this.timezone = PH_TIMEZONE;
@@ -665,12 +719,15 @@ attendanceSchema.statics.processTimeOut = async function(employeeId, timeOut, so
       throw new Error('Time out already recorded for today');
     }
 
-    const validation = attendance.canTimeOut(timeOut, source);
+    // Convert timeOut to PST for validation and storage
+    const timeOutPST = moment(timeOut).tz(PH_TIMEZONE).toDate();
+    
+    const validation = attendance.canTimeOut(timeOutPST, source);
     if (!validation.allowed) {
       throw new Error(validation.reason);
     }
 
-    attendance.timeOut = timeOut;
+    attendance.timeOut = timeOutPST; // Store as PST
     attendance.timeOutSource = source;
     attendance.lastModified = getCurrentPHDateTime();
     attendance.timezone = PH_TIMEZONE;
@@ -704,12 +761,15 @@ attendanceSchema.statics.processRfidScan = async function(employeeId, scanTime, 
       throw new Error('Cannot record attendance while on leave');
     }
 
-    if (!isWithinWorkingHours(scanTime)) {
+    // Convert scanTime to PST for validation
+    const scanTimePST = moment(scanTime).tz(PH_TIMEZONE);
+    
+    if (!isWithinWorkingHours(scanTimePST.toDate())) {
       throw new Error('RFID scanning only allowed between 6:00 AM - 7:00 PM Philippines Time EVERYDAY');
     }
 
     if (action === 'timein') {
-      if (!isTimeInAllowed(scanTime)) {
+      if (!isTimeInAllowed(scanTimePST.toDate())) {
         throw new Error('Time in only allowed between 6:00 AM - 5:00 PM Philippines Time');
       }
 
@@ -729,7 +789,7 @@ attendanceSchema.statics.processRfidScan = async function(employeeId, scanTime, 
           department: employee.department,
           position: employee.position,
           date: todayStr,
-          timeIn: scanTime,
+          timeIn: scanTimePST.toDate(), // Store as PST
           status: 'Present',
           dateEmployed: employee.dateEmployed,
           recordType: 'auto',
@@ -742,7 +802,7 @@ attendanceSchema.statics.processRfidScan = async function(employeeId, scanTime, 
           isNoWorkDay: false
         });
       } else {
-        attendance.timeIn = scanTime;
+        attendance.timeIn = scanTimePST.toDate(); // Store as PST
         attendance.status = 'Present';
         attendance.timeInSource = 'rfid';
         attendance.recordType = 'auto';
@@ -758,7 +818,7 @@ attendanceSchema.statics.processRfidScan = async function(employeeId, scanTime, 
       return { type: 'timein', data: result };
 
     } else if (action === 'timeout') {
-      if (!isTimeOutAllowed(scanTime)) {
+      if (!isTimeOutAllowed(scanTimePST.toDate())) {
         throw new Error('Time out only allowed between 6:00 AM - 7:00 PM Philippines Time');
       }
 
@@ -770,7 +830,7 @@ attendanceSchema.statics.processRfidScan = async function(employeeId, scanTime, 
         throw new Error('Time out already recorded for today');
       }
 
-      const result = await this.processTimeOut(employeeId, scanTime, 'rfid');
+      const result = await this.processTimeOut(employeeId, scanTimePST.toDate(), 'rfid');
       return { type: 'timeout', data: result };
 
     } else {
@@ -1633,6 +1693,15 @@ attendanceSchema.pre('save', async function(next) {
   }
   if (!this.timezoneDisplay) {
     this.timezoneDisplay = PH_TIMEZONE_DISPLAY;
+  }
+  
+  // Ensure timeIn and timeOut are stored in PST
+  if (this.timeIn && !this.isModified('timeIn')) {
+    this.timeIn = moment(this.timeIn).tz(PH_TIMEZONE).toDate();
+  }
+  
+  if (this.timeOut && !this.isModified('timeOut')) {
+    this.timeOut = moment(this.timeOut).tz(PH_TIMEZONE).toDate();
   }
   
   if (!this.isLeaveRecord && !this.isNoWorkDay) {

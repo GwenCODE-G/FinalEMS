@@ -617,7 +617,7 @@ const AttendanceTable = ({
       setLocalUpdates(prev => ({
         ...prev,
         [data.employeeId]: {
-          status: data.type === 'timein' ? 'Present' : 'Completed',
+          status: data.type === 'timein' ? 'Present' : 'Present',
           timeIn: data.type === 'timein' ? data.time : null,
           timeOut: data.type === 'timeout' ? data.time : null,
           timestamp: new Date().getTime(),
@@ -673,8 +673,8 @@ const AttendanceTable = ({
     const realTimeUpdate = localUpdates[employeeId];
     if (realTimeUpdate && selectedDate === today) {
       return {
-        status: realTimeUpdate.status,
-        color: getStatusColor(realTimeUpdate.status),
+        status: realTimeUpdate.status === 'Completed' ? 'Present' : realTimeUpdate.status,
+        color: getStatusColor(realTimeUpdate.status === 'Completed' ? 'Present' : realTimeUpdate.status),
         timeIn: realTimeUpdate.timeIn ? formatTime(realTimeUpdate.timeIn) : '-',
         timeOut: realTimeUpdate.timeOut ? formatTime(realTimeUpdate.timeOut) : '-',
         isWorkDay: true,
@@ -692,9 +692,14 @@ const AttendanceTable = ({
       const timeInDisplay = todayAttendance.displayTimeIn || formatTime(todayAttendance.timeIn);
       const timeOutDisplay = todayAttendance.displayTimeOut || formatTime(todayAttendance.timeOut);
       
+      let displayStatus = todayAttendance.status;
+      if (displayStatus === 'Completed' || displayStatus === 'Late') {
+        displayStatus = 'Present';
+      }
+      
       return {
-        status: todayAttendance.status || 'Present',
-        color: getStatusColor(todayAttendance.status || 'Present'),
+        status: displayStatus,
+        color: getStatusColor(displayStatus),
         timeIn: timeInDisplay,
         timeOut: timeOutDisplay,
         isWorkDay: true,
@@ -751,11 +756,10 @@ const AttendanceTable = ({
 
         case 'status':
           const statusOrder = { 
-            'Completed': 1, 'Late': 2, 'Present': 3, 
-            'Pending': 4, 'No Work': 5, 'Absent': 6, 'In_Leave': 7
+            'Present': 1, 'Pending': 2, 'No Work': 3, 'Absent': 4, 'In_Leave': 5
           };
-          const aStatusOrder = statusOrder[aStatus.status] || 8;
-          const bStatusOrder = statusOrder[bStatus.status] || 8;
+          const aStatusOrder = statusOrder[aStatus.status] || 6;
+          const bStatusOrder = statusOrder[bStatus.status] || 6;
           return config.direction === 'desc' ? 
             bStatusOrder - aStatusOrder : aStatusOrder - bStatusOrder;
 
@@ -898,15 +902,13 @@ const AttendanceTable = ({
   };
 
   const handleLeaveAssignSuccess = () => {
-    showAlert(`Leave assigned successfully`, 'success');
+    showAlert(`Leave assigned successfully to EMS_Leaves collection`, 'success');
     fetchEmployeeLeaves();
   };
 
   const getStatusColor = (status) => {
     switch (status) {
       case 'Present': return 'text-green-600 bg-green-100 border-green-200';
-      case 'Late': return 'text-yellow-600 bg-yellow-100 border-yellow-200';
-      case 'Completed': return 'text-blue-600 bg-blue-100 border-blue-200';
       case 'Absent': return 'text-red-600 bg-red-100 border-red-200';
       case 'No Work': return 'text-gray-600 bg-gray-100 border-gray-200';
       case 'Pending': return 'text-purple-600 bg-purple-100 border-purple-200';
@@ -918,10 +920,7 @@ const AttendanceTable = ({
   const getStatusIcon = (status) => {
     switch (status) {
       case 'Present':
-      case 'Completed':
         return <FaCheckCircle className="text-green-500 text-xs" />;
-      case 'Late':
-        return <FaExclamationTriangle className="text-yellow-500 text-xs" />;
       case 'Absent':
       case 'In_Leave':
         return <FaTimesCircle className="text-red-500 text-xs" />;
@@ -1037,8 +1036,6 @@ const AttendanceTable = ({
   const getStatusCounts = () => {
     const counts = {
       Present: 0,
-      Late: 0,
-      Completed: 0,
       Absent: 0,
       Pending: 0,
       'No Work': 0,
@@ -1055,6 +1052,14 @@ const AttendanceTable = ({
 
   const statusCounts = getStatusCounts();
   const departments = getDepartments();
+
+  const canTimeOut = (employee) => {
+    const attendanceStatus = getAttendanceStatus(employee);
+    const isOnLeaveToday = isOnLeave(employee.employeeId, selectedDate);
+    const isWorkDayToday = isWorkDay(employee, selectedDate);
+    
+    return true;
+  };
 
   if (employees.length === 0) {
     return (
@@ -1179,8 +1184,6 @@ const AttendanceTable = ({
             >
               <option value="all">All Status</option>
               <option value="Present">Present</option>
-              <option value="Late">Late</option>
-              <option value="Completed">Completed</option>
               <option value="Pending">Pending</option>
               <option value="No Work">No Work</option>
               <option value="In_Leave">In Leave</option>
@@ -1267,14 +1270,6 @@ const AttendanceTable = ({
           <div className="flex items-center space-x-1">
             <div className="w-2 h-2 rounded-full bg-green-500"></div>
             <span>Present: {statusCounts.Present}</span>
-          </div>
-          <div className="flex items-center space-x-1">
-            <div className="w-2 h-2 rounded-full bg-yellow-500"></div>
-            <span>Late: {statusCounts.Late}</span>
-          </div>
-          <div className="flex items-center space-x-1">
-            <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-            <span>Completed: {statusCounts.Completed}</span>
           </div>
           <div className="flex items-center space-x-1">
             <div className="w-2 h-2 rounded-full bg-red-500"></div>
@@ -1377,7 +1372,8 @@ const AttendanceTable = ({
               const isWorkDayToday = isWorkDay(employee, selectedDate);
               
               const canTimeIn = isWorkDayToday && !isOnLeaveToday && attendanceStatus.timeIn === '-' && attendanceStatus.status !== 'No Work';
-              const canTimeOut = isWorkDayToday && !isOnLeaveToday && attendanceStatus.timeIn !== '-' && attendanceStatus.timeOut === '-' && attendanceStatus.status !== 'No Work';
+              
+              const timeOutEnabled = true;
               
               return (
                 <tr 
@@ -1464,9 +1460,6 @@ const AttendanceTable = ({
                       {getStatusIcon(attendanceStatus.status)}
                       <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border ${attendanceStatus.color}`}>
                         {attendanceStatus.status}
-                        {attendanceStatus.status === 'Late' && attendanceStatus.timeIn !== '-' && (
-                          <span className="ml-1 text-xs">({Math.round((new Date() - new Date(attendanceStatus.timestamp)) / (1000 * 60))}m ago)</span>
-                        )}
                       </span>
                     </div>
                   </td>
@@ -1498,13 +1491,8 @@ const AttendanceTable = ({
                       <button
                         type="button"
                         onClick={() => onManualTimeOut(employee)}
-                        className={`p-1 rounded text-xs transition-colors border ${
-                          canTimeOut
-                            ? 'text-blue-600 hover:text-blue-900 bg-blue-50 border-blue-200 hover:bg-blue-100'
-                            : 'text-gray-400 bg-gray-100 border-gray-300 cursor-not-allowed'
-                        }`}
-                        title={canTimeOut ? "Manual Time Out" : "Time Out not available"}
-                        disabled={!canTimeOut}
+                        className="text-blue-600 hover:text-blue-900 p-1 rounded bg-blue-50 text-xs transition-colors border border-blue-200 hover:bg-blue-100"
+                        title="Manual Time Out"
                       >
                         <FaSignOutAlt />
                       </button>
@@ -1522,7 +1510,7 @@ const AttendanceTable = ({
                         type="button"
                         onClick={() => handleAssignLeave(employee)}
                         className="text-purple-600 hover:text-purple-900 p-1 rounded bg-purple-50 text-xs transition-colors border border-purple-200 hover:bg-purple-100"
-                        title="Assign Leave"
+                        title="Assign Leave to EMS_Leaves"
                       >
                         <FaCalendarPlus />
                       </button>

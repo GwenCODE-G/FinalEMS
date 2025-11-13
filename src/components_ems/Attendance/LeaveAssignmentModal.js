@@ -213,7 +213,7 @@ const LeaveAssignmentModal = ({
     setAssignmentStatus('assigning');
 
     try {
-      console.log('Assigning leave to both collections:', {
+      console.log('Assigning leave to EMS_Leaves collection:', {
         employeeId: safeEmployee.employeeId,
         startDate: leaveData.startDate,
         endDate: leaveData.endDate,
@@ -221,7 +221,7 @@ const LeaveAssignmentModal = ({
         leaveType: leaveData.leaveType,
         status: leaveData.status,
         database: 'BrightonSystem',
-        collections: ['EMS_Leaves', 'EMS_Attendance']
+        collection: 'EMS_Leaves'
       });
 
       const response = await axios.post(`${apiBaseUrl}/api/attendance/leave`, {
@@ -234,7 +234,7 @@ const LeaveAssignmentModal = ({
       });
 
       if (response.data.success) {
-        console.log('Leave assignment successful in both collections:', response.data);
+        console.log('Leave assignment successful in EMS_Leaves:', response.data);
         setAssignmentStatus('success');
         
         setTimeout(() => {
@@ -285,9 +285,9 @@ const LeaveAssignmentModal = ({
   const getStatusMessage = () => {
     switch (assignmentStatus) {
       case 'assigning':
-        return { message: 'Assigning leave to EMS_Leaves and EMS_Attendance collections...', color: 'text-blue-600' };
+        return { message: 'Assigning leave to EMS_Leaves collection...', color: 'text-blue-600' };
       case 'success':
-        return { message: 'Leave assigned successfully to both collections!', color: 'text-green-600' };
+        return { message: 'Leave assigned successfully to EMS_Leaves!', color: 'text-green-600' };
       case 'error':
         return { message: 'Operation failed. Please try again.', color: 'text-red-600' };
       default:
@@ -335,7 +335,7 @@ const LeaveAssignmentModal = ({
                   </p>
                   <div className="flex items-center mt-2 text-blue-600 text-sm">
                     <FaDatabase className="mr-2" />
-                    <span>Will be saved to EMS_Leaves and EMS_Attendance collections</span>
+                    <span>Will be saved to EMS_Leaves collection in BrightonSystem database</span>
                   </div>
                 </div>
               </div>
@@ -481,7 +481,7 @@ const LeaveAssignmentModal = ({
                 <div>
                   <h4 className="text-yellow-800 font-semibold text-sm">Important Notes</h4>
                   <ul className="text-yellow-700 text-xs mt-1 space-y-1">
-                    <li>• Leave records will be saved in both EMS_Leaves and EMS_Attendance collections</li>
+                    <li>• Leave records will be saved in EMS_Leaves collection in BrightonSystem database</li>
                     <li>• Only work days (Monday-Friday) are counted</li>
                     <li>• Date range: October 2024 to December {maxYear} (auto-extends)</li>
                     <li>• Existing attendance records will be converted to leave</li>

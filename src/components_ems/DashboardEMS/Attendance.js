@@ -15,6 +15,55 @@ import RfidAssignmentModal from '../Attendance/RfidAssignmentModal';
 const PORTS_TO_TRY = [5000, 5001, 3001, 3000, 8080];
 let cachedBaseUrl = null;
 
+// Philippine Timezone Utilities
+const PH_TIMEZONE = 'Asia/Manila'; // GMT+8
+
+const getPHDate = () => {
+  return new Date().toLocaleString('en-US', { timeZone: PH_TIMEZONE });
+};
+
+const formatDateForAPI = (date) => {
+  // Convert to PH time and format as YYYY-MM-DD
+  const phDate = new Date(date.toLocaleString('en-US', { timeZone: PH_TIMEZONE }));
+  const year = phDate.getFullYear();
+  const month = String(phDate.getMonth() + 1).padStart(2, '0');
+  const day = String(phDate.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const getPHTimeString = (date = new Date()) => {
+  // Get current time in PH timezone and format as HH:MM
+  const phDate = new Date(date.toLocaleString('en-US', { timeZone: PH_TIMEZONE }));
+  const hours = String(phDate.getHours()).padStart(2, '0');
+  const minutes = String(phDate.getMinutes()).padStart(2, '0');
+  return `${hours}:${minutes}`;
+};
+
+const convertToPHTime = (dateString) => {
+  if (!dateString) return null;
+  
+  // If it's already a Date object
+  if (dateString instanceof Date) {
+    return new Date(dateString.toLocaleString('en-US', { timeZone: PH_TIMEZONE }));
+  }
+  
+  // If it's an ISO string or other date string
+  const date = new Date(dateString);
+  return new Date(date.toLocaleString('en-US', { timeZone: PH_TIMEZONE }));
+};
+
+const formatTimeForDisplay = (dateString) => {
+  if (!dateString) return '--:--';
+  
+  const phDate = convertToPHTime(dateString);
+  return phDate.toLocaleTimeString('en-US', { 
+    timeZone: PH_TIMEZONE,
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+};
+
 const testBackendConnection = async (port) => {
   try {
     const response = await axios.get(`http://localhost:${port}/api/test`, {
@@ -122,11 +171,9 @@ function Attendance() {
   const [filteredEmployees, setFilteredEmployees] = useState([]);
   const [searchTerm] = useState('');
   const [selectedDate, setSelectedDate] = useState(() => {
+    // Use PH timezone for initial date
     const today = new Date();
-    const year = today.getFullYear();
-    const month = String(today.getMonth() + 1).padStart(2, '0');
-    const day = String(today.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+    return formatDateForAPI(today);
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -166,7 +213,7 @@ function Attendance() {
     isOpen: false, 
     employee: null, 
     action: '', 
-    time: '' 
+    time: getPHTimeString() // Default to current PH time
   });
 
   const realTimeUpdates = useRealTimeUpdates(apiBaseUrl);
@@ -179,32 +226,20 @@ function Attendance() {
 
   const getMinDate = () => {
     const octoberFirst = new Date('2024-10-01');
-    return octoberFirst.toISOString().split('T')[0];
+    return formatDateForAPI(octoberFirst);
   };
 
   const getMaxDate = () => {
-    const today = new Date();
-    const year = today.getFullYear();
-    const month = String(today.getMonth() + 1).padStart(2, '0');
-    const day = String(today.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+    return formatDateForAPI(new Date());
   };
 
   const isToday = (date) => {
-    const today = new Date();
-    const year = today.getFullYear();
-    const month = String(today.getMonth() + 1).padStart(2, '0');
-    const day = String(today.getDate()).padStart(2, '0');
-    const todayStr = `${year}-${month}-${day}`;
-    return date === todayStr;
+    const today = formatDateForAPI(new Date());
+    return date === today;
   };
 
   const getTodayString = () => {
-    const today = new Date();
-    const year = today.getFullYear();
-    const month = String(today.getMonth() + 1).padStart(2, '0');
-    const day = String(today.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+    return formatDateForAPI(new Date());
   };
 
   const initializeAPI = useCallback(async () => {
@@ -278,12 +313,21 @@ function Attendance() {
       console.log('Attendance records loaded:', response.data.data?.length || 0);
       
       if (response.data.data && Array.isArray(response.data.data)) {
-        response.data.data.forEach(record => {
-          console.log(`Record: ${record.employeeId} - TimeIn: ${record.timeIn} - TimeOut: ${record.timeOut} - Status: ${record.status}`);
+        // Convert times to PH timezone for display
+        const processedData = response.data.data.map(record => ({
+          ...record,
+          timeInDisplay: record.timeIn ? formatTimeForDisplay(record.timeIn) : '--:--',
+          timeOutDisplay: record.timeOut ? formatTimeForDisplay(record.timeOut) : '--:--'
+        }));
+        
+        processedData.forEach(record => {
+          console.log(`Record: ${record.employeeId} - TimeIn: ${record.timeInDisplay} - TimeOut: ${record.timeOutDisplay} - Status: ${record.status}`);
         });
+        
+        setAttendance(processedData);
+      } else {
+        setAttendance([]);
       }
-      
-      setAttendance(response.data.data || []);
     } catch (error) {
       console.error('Error fetching attendance:', error);
       console.error('Error details:', error.response?.data || error.message);
@@ -380,7 +424,7 @@ function Attendance() {
         averageHours: 0,
         employmentDate: employee.dateEmployed
       });
-      setShowSummaryModal(true);
+        setShowSummaryModal(true);
     }
   }, [apiBaseUrl]);
 
@@ -572,7 +616,7 @@ function Attendance() {
       isOpen: true,
       employee,
       action,
-      time: ''
+      time: getPHTimeString() // Set to current PH time
     });
   };
 
@@ -581,7 +625,7 @@ function Attendance() {
       isOpen: false,
       employee: null,
       action: '',
-      time: ''
+      time: getPHTimeString()
     });
   };
 
@@ -643,14 +687,18 @@ function Attendance() {
     }
 
     try {
-      const timeToUse = time || new Date().toTimeString().substring(0, 5);
+      // Use provided time or current PH time
+      const timeToUse = time || getPHTimeString();
       
       const manualData = {
         employeeId: employee.employeeId,
         date: selectedDate,
         time: timeToUse,
-        action: action
+        action: action,
+        timezone: PH_TIMEZONE // Send timezone info to backend
       };
+
+      console.log('Sending manual attendance data:', manualData);
 
       const response = await axios.post(`${apiBaseUrl}/api/attendance/manual`, manualData);
 
@@ -879,7 +927,7 @@ function Attendance() {
             />
           </div>
           <div className="text-xs text-gray-500 mt-1 text-center">
-            October 1, 2024 - Present
+            October 1, 2024 - Present (Philippine Time)
           </div>
         </div>
       </div>

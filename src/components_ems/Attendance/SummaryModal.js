@@ -19,6 +19,61 @@ const SummaryModal = ({
   const [refreshCount, setRefreshCount] = useState(0);
   const [activeTab, setActiveTab] = useState('summary');
   const [employeeLeaves, setEmployeeLeaves] = useState([]);
+  const [employeeWorkSchedule, setEmployeeWorkSchedule] = useState(null);
+
+  const getCurrentPhilippineTime = () => {
+    const now = new Date();
+    return new Date(now.getTime() + (8 * 60 * 60 * 1000));
+  };
+
+  const formatTimeForDisplay = (dateString) => {
+    if (!dateString) return 'Pending';
+    try {
+      const date = new Date(dateString);
+      const phDate = new Date(date.getTime() + (8 * 60 * 60 * 1000));
+      return phDate.toLocaleTimeString('en-US', { 
+        hour12: true, 
+        hour: '2-digit', 
+        minute: '2-digit',
+        timeZone: 'UTC'
+      });
+    } catch (error) {
+      return 'Pending';
+    }
+  };
+
+  const formatDateForDisplay = (dateString) => {
+    if (!dateString) return '-';
+    try {
+      const date = new Date(dateString);
+      const phDate = new Date(date.getTime() + (8 * 60 * 60 * 1000));
+      return phDate.toLocaleDateString('en-US', {
+        weekday: 'short',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        timeZone: 'UTC'
+      });
+    } catch (error) {
+      return '-';
+    }
+  };
+
+  const formatDateShort = (dateString) => {
+    if (!dateString) return '-';
+    try {
+      const date = new Date(dateString);
+      const phDate = new Date(date.getTime() + (8 * 60 * 60 * 1000));
+      return phDate.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        timeZone: 'UTC'
+      });
+    } catch (error) {
+      return '-';
+    }
+  };
 
   const calculateAllWorkDays = useCallback((employmentDate) => {
     if (!employmentDate) return [];
@@ -42,6 +97,23 @@ const SummaryModal = ({
     
     return workDays;
   }, []);
+
+  const fetchEmployeeWorkSchedule = useCallback(async () => {
+    if (!monthlySummary || !apiBaseUrl) return;
+
+    try {
+      const response = await axios.get(
+        `${apiBaseUrl}/api/employees/${monthlySummary.employee.employeeId}`,
+        { timeout: 10000 }
+      );
+      
+      if (response.data.success) {
+        setEmployeeWorkSchedule(response.data.data.workSchedule);
+      }
+    } catch (error) {
+      console.error('Error fetching employee work schedule:', error);
+    }
+  }, [monthlySummary, apiBaseUrl]);
 
   const fetchRealTimeSummary = useCallback(async () => {
     if (!monthlySummary || !apiBaseUrl) return;
@@ -117,6 +189,7 @@ const SummaryModal = ({
 
     try {
       await Promise.all([
+        fetchEmployeeWorkSchedule(),
         fetchRealTimeSummary(),
         fetchAttendanceHistory(),
         fetchEmployeeLeaves()
@@ -124,7 +197,7 @@ const SummaryModal = ({
     } catch (error) {
       console.error('Error fetching complete data:', error);
     }
-  }, [monthlySummary, apiBaseUrl, fetchRealTimeSummary, fetchAttendanceHistory, fetchEmployeeLeaves]);
+  }, [monthlySummary, apiBaseUrl, fetchEmployeeWorkSchedule, fetchRealTimeSummary, fetchAttendanceHistory, fetchEmployeeLeaves]);
 
   useEffect(() => {
     const findWorkingBackend = async () => {
@@ -168,50 +241,6 @@ const SummaryModal = ({
     const hours = Math.floor(totalHours);
     const minutes = Math.round((totalHours - hours) * 60);
     return `${hours}h ${minutes}m`;
-  };
-
-  const formatTime = (timeString) => {
-    if (!timeString) return 'Pending';
-    try {
-      const date = new Date(timeString);
-      if (isNaN(date.getTime())) return 'Pending';
-      return date.toLocaleTimeString('en-US', { 
-        hour12: true, 
-        hour: '2-digit', 
-        minute: '2-digit'
-      });
-    } catch (error) {
-      return 'Pending';
-    }
-  };
-
-  const formatDate = (dateString) => {
-    if (!dateString) return '-';
-    try {
-      const date = new Date(dateString);
-      return date.toLocaleDateString('en-US', {
-        weekday: 'short',
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-      });
-    } catch (error) {
-      return '-';
-    }
-  };
-
-  const formatDateShort = (dateString) => {
-    if (!dateString) return '-';
-    try {
-      const date = new Date(dateString);
-      return date.toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric'
-      });
-    } catch (error) {
-      return '-';
-    }
   };
 
   const isOnLeave = (date) => {
@@ -276,54 +305,95 @@ const SummaryModal = ({
   const getEmploymentPeriodText = () => {
     if (!monthlySummary) return '';
     const employmentDate = new Date(monthlySummary.employmentDate || monthlySummary.employee.dateEmployed);
-    return `${formatDate(employmentDate)} - Present`;
+    return `${formatDateForDisplay(employmentDate)} - Present`;
   };
 
-  const calculateLateMinutes = (attendanceRecord, employee) => {
-    if (!attendanceRecord || !attendanceRecord.timeIn || !employee || !employee.workSchedule) return 0;
+  const calculateLateMinutes = (attendanceRecord) => {
+    if (!attendanceRecord || !attendanceRecord.timeIn || isOnLeave(attendanceRecord.date)) {
+      return 0;
+    }
     
     try {
       const timeIn = new Date(attendanceRecord.timeIn);
       const dayOfWeek = timeIn.toLocaleDateString('en-US', { weekday: 'long' });
-      const schedule = employee.workSchedule[dayOfWeek];
       
-      if (!schedule || !schedule.active || !schedule.start) return 0;
+      if (!employeeWorkSchedule || !employeeWorkSchedule[dayOfWeek]) {
+        return 0;
+      }
+      
+      const schedule = employeeWorkSchedule[dayOfWeek];
+      
+      if (!schedule || !schedule.active || !schedule.start) {
+        return 0;
+      }
       
       const [scheduledHour, scheduledMinute] = schedule.start.split(':').map(Number);
       const scheduledTime = new Date(timeIn);
       scheduledTime.setHours(scheduledHour, scheduledMinute, 0, 0);
       
       if (timeIn > scheduledTime) {
-        return Math.floor((timeIn - scheduledTime) / (1000 * 60));
+        const lateMinutes = Math.floor((timeIn - scheduledTime) / (1000 * 60));
+        return lateMinutes;
       }
       
       return 0;
     } catch (error) {
+      console.error('Error calculating late minutes:', error);
       return 0;
     }
   };
 
-  const calculateOvertimeMinutes = (attendanceRecord, employee) => {
-    if (!attendanceRecord || !attendanceRecord.timeOut || !employee || !employee.workSchedule) return 0;
+  const calculateOvertimeMinutes = (attendanceRecord) => {
+    if (!attendanceRecord || !attendanceRecord.timeOut || isOnLeave(attendanceRecord.date)) {
+      return 0;
+    }
     
     try {
       const timeOut = new Date(attendanceRecord.timeOut);
       const dayOfWeek = timeOut.toLocaleDateString('en-US', { weekday: 'long' });
-      const schedule = employee.workSchedule[dayOfWeek];
       
-      if (!schedule || !schedule.active || !schedule.end) return 0;
+      if (!employeeWorkSchedule || !employeeWorkSchedule[dayOfWeek]) {
+        return 0;
+      }
+      
+      const schedule = employeeWorkSchedule[dayOfWeek];
+      
+      if (!schedule || !schedule.active || !schedule.end) {
+        return 0;
+      }
       
       const [scheduledHour, scheduledMinute] = schedule.end.split(':').map(Number);
       const scheduledEndTime = new Date(timeOut);
       scheduledEndTime.setHours(scheduledHour, scheduledMinute, 0, 0);
       
       if (timeOut > scheduledEndTime) {
-        return Math.floor((timeOut - scheduledEndTime) / (1000 * 60));
+        const overtimeMinutes = Math.floor((timeOut - scheduledEndTime) / (1000 * 60));
+        return overtimeMinutes;
       }
       
       return 0;
     } catch (error) {
+      console.error('Error calculating overtime minutes:', error);
       return 0;
+    }
+  };
+
+  const calculateHoursWorked = (attendanceRecord) => {
+    if (!attendanceRecord || !attendanceRecord.timeIn || !attendanceRecord.timeOut || isOnLeave(attendanceRecord.date)) {
+      return 0;
+    }
+    
+    try {
+      const timeIn = new Date(attendanceRecord.timeIn);
+      const timeOut = new Date(attendanceRecord.timeOut);
+      
+      const hoursWorked = Math.floor((timeOut - timeIn) / (1000 * 60 * 60));
+      const minutesWorked = Math.floor(((timeOut - timeIn) % (1000 * 60 * 60)) / (1000 * 60));
+      
+      return { hours: hoursWorked, minutes: minutesWorked, totalMinutes: hoursWorked * 60 + minutesWorked };
+    } catch (error) {
+      console.error('Error calculating hours worked:', error);
+      return { hours: 0, minutes: 0, totalMinutes: 0 };
     }
   };
 
@@ -331,36 +401,19 @@ const SummaryModal = ({
     if (minutes === 0) return 'No Late';
     const hours = Math.floor(minutes / 60);
     const mins = minutes % 60;
-    const secs = 0;
-    return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    return `${hours}h ${mins}m`;
   };
 
   const formatOvertimeTime = (minutes) => {
     if (minutes === 0) return 'No Overtime';
     const hours = Math.floor(minutes / 60);
     const mins = minutes % 60;
-    const secs = 0;
-    return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    return `${hours}h ${mins}m`;
   };
 
-  const formatHoursWorked = (attendanceRecord) => {
-    if (!attendanceRecord || !attendanceRecord.timeIn || !attendanceRecord.timeOut) {
-      return 'Pending';
-    }
-    
-    if (attendanceRecord.hoursWorked && attendanceRecord.hoursWorked !== '0h 0m') {
-      const [hours, minutes] = attendanceRecord.hoursWorked.split('h ');
-      const mins = minutes.replace('m', '');
-      return `${hours.padStart(2, '0')}:${mins.padStart(2, '0')}:00`;
-    }
-    
-    if (attendanceRecord.totalMinutes) {
-      const hours = Math.floor(attendanceRecord.totalMinutes / 60);
-      const minutes = attendanceRecord.totalMinutes % 60;
-      return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:00`;
-    }
-    
-    return 'Pending';
+  const formatHoursWorkedDisplay = (hoursWorked) => {
+    if (!hoursWorked || hoursWorked.totalMinutes === 0) return 'Pending';
+    return `${hoursWorked.hours}h ${hoursWorked.minutes}m`;
   };
 
   const getDayStatus = (workDay, attendance, isLeaveDay, isNoWorkDay) => {
@@ -371,31 +424,32 @@ const SummaryModal = ({
     
     if (isLeaveDay) {
       return {
-        timeIn: 'In_Leave',
-        timeOut: 'In_Leave',
+        timeIn: 'IN_LEAVE',
+        timeOut: 'IN_LEAVE',
         status: 'In_Leave',
-        late: 'In_Leave',
-        overtime: 'In_Leave',
-        hours: 'In_Leave',
+        late: 'IN_LEAVE',
+        overtime: 'IN_LEAVE',
+        hours: 'IN_LEAVE',
         color: 'bg-red-100 text-red-800'
       };
     }
     
     if (isNoWorkDay) {
       return {
-        timeIn: 'No Work Today',
-        timeOut: 'No Work Today',
+        timeIn: 'NO WORK TODAY',
+        timeOut: 'NO WORK TODAY',
         status: 'No Work',
-        late: 'No Work Today',
-        overtime: 'No Work Today',
-        hours: 'No Work Today',
+        late: 'NO WORK TODAY',
+        overtime: 'NO WORK TODAY',
+        hours: 'NO WORK TODAY',
         color: 'bg-gray-100 text-gray-800'
       };
     }
     
     if (attendance) {
-      const lateMinutes = calculateLateMinutes(attendance, summaryData.employee);
-      const overtimeMinutes = calculateOvertimeMinutes(attendance, summaryData.employee);
+      const lateMinutes = calculateLateMinutes(attendance);
+      const overtimeMinutes = calculateOvertimeMinutes(attendance);
+      const hoursWorked = calculateHoursWorked(attendance);
       
       let status = attendance.status;
       let color = 'bg-green-100 text-green-800';
@@ -406,20 +460,21 @@ const SummaryModal = ({
         color = 'bg-blue-100 text-blue-800';
       } else if (status === 'Absent') {
         color = 'bg-red-100 text-red-800';
+      } else if (status === 'In_Leave') {
+        color = 'bg-red-100 text-red-800';
       }
       
       return {
-        timeIn: attendance.timeIn ? formatTime(attendance.timeIn) : 'Pending',
-        timeOut: attendance.timeOut ? formatTime(attendance.timeOut) : 'Pending',
+        timeIn: attendance.timeIn ? formatTimeForDisplay(attendance.timeIn) : 'Pending',
+        timeOut: attendance.timeOut ? formatTimeForDisplay(attendance.timeOut) : 'Pending',
         status: status,
         late: formatLateTime(lateMinutes),
         overtime: formatOvertimeTime(overtimeMinutes),
-        hours: formatHoursWorked(attendance),
+        hours: formatHoursWorkedDisplay(hoursWorked),
         color: color
       };
     }
     
-    // No attendance record exists
     if (isFutureDay) {
       return {
         timeIn: 'Pending',
@@ -435,7 +490,7 @@ const SummaryModal = ({
     if (isToday) {
       const now = new Date();
       const endOfWorkDay = new Date(workDay);
-      endOfWorkDay.setHours(17, 0, 0, 0); // 5:00 PM
+      endOfWorkDay.setHours(17, 0, 0, 0);
       
       if (now > endOfWorkDay) {
         return {
@@ -460,7 +515,6 @@ const SummaryModal = ({
       }
     }
     
-    // Past day with no attendance record
     if (isPastDay) {
       return {
         timeIn: 'Absent',
@@ -506,11 +560,11 @@ const SummaryModal = ({
               {summaryData.employee.department} • {summaryData.employee.position}
             </p>
             <p className="text-sm text-gray-500 mt-1">
-              Date Employed: {formatDate(summaryData.employee.dateEmployed)} • 
+              Date Employed: {formatDateForDisplay(summaryData.employee.dateEmployed)} • 
               Employee ID: {summaryData.employee.employeeId}
             </p>
             <p className="text-xs text-green-600 mt-1">
-              Last updated: {new Date().toLocaleTimeString()}
+              Last updated: {getCurrentPhilippineTime().toLocaleTimeString()} PST
               {realTimeSummary && <span> • Real-time Data</span>}
             </p>
           </div>
@@ -668,8 +722,8 @@ const SummaryModal = ({
                   <tr>
                     <th className="px-3 py-2 text-left text-xs font-medium">Date</th>
                     <th className="px-3 py-2 text-left text-xs font-medium">Day</th>
-                    <th className="px-3 py-2 text-left text-xs font-medium">Time In</th>
-                    <th className="px-3 py-2 text-left text-xs font-medium">Time Out</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium">Time In (PST)</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium">Time Out (PST)</th>
                     <th className="px-3 py-2 text-left text-xs font-medium">Status</th>
                     <th className="px-3 py-2 text-left text-xs font-medium">Late</th>
                     <th className="px-3 py-2 text-left text-xs font-medium">Overtime</th>
@@ -707,13 +761,13 @@ const SummaryModal = ({
                                 {dayStatus.status}
                               </span>
                             </td>
-                            <td className="px-3 py-2 text-sm text-center font-mono">
+                            <td className="px-3 py-2 text-sm text-center">
                               {dayStatus.late}
                             </td>
-                            <td className="px-3 py-2 text-sm text-center font-mono">
+                            <td className="px-3 py-2 text-sm text-center">
                               {dayStatus.overtime}
                             </td>
-                            <td className="px-3 py-2 text-sm text-center font-mono">
+                            <td className="px-3 py-2 text-sm text-center">
                               {dayStatus.hours}
                             </td>
                           </tr>

@@ -502,16 +502,6 @@ const SummaryModal = ({
           hours: 'Absent',
           color: 'bg-red-100 text-red-800'
         };
-      } else {
-        return {
-          timeIn: 'Pending',
-          timeOut: 'Pending',
-          status: 'Pending',
-          late: 'Pending',
-          overtime: 'Pending',
-          hours: 'Pending',
-          color: 'bg-gray-100 text-gray-800'
-        };
       }
     }
     
@@ -527,15 +517,6 @@ const SummaryModal = ({
       };
     }
     
-    return {
-      timeIn: 'Pending',
-      timeOut: 'Pending',
-      status: 'Pending',
-      late: 'Pending',
-      overtime: 'Pending',
-      hours: 'Pending',
-      color: 'bg-gray-100 text-gray-800'
-    };
   };
 
   const summaryData = realTimeSummary || monthlySummary;

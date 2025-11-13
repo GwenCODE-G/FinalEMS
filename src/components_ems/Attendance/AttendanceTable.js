@@ -642,6 +642,7 @@ const AttendanceTable = ({
   const getAttendanceStatus = useCallback((employee) => {
     const employeeId = employee.employeeId;
     const today = new Date().toISOString().split('T')[0];
+    const isToday = selectedDate === today;
     
     if (isOnLeave(employeeId, selectedDate)) {
       return {
@@ -671,7 +672,7 @@ const AttendanceTable = ({
     }
 
     const realTimeUpdate = localUpdates[employeeId];
-    if (realTimeUpdate && selectedDate === today) {
+    if (realTimeUpdate && isToday) {
       return {
         status: realTimeUpdate.status === 'Completed' ? 'Present' : realTimeUpdate.status,
         color: getStatusColor(realTimeUpdate.status === 'Completed' ? 'Present' : realTimeUpdate.status),
@@ -710,6 +711,23 @@ const AttendanceTable = ({
       };
     }
     
+    const now = new Date();
+    const selectedDateTime = new Date(selectedDate);
+    const isPastDate = selectedDateTime < new Date(now.toDateString());
+    
+    if (isPastDate || (isToday && isWorkDayEnded(employee))) {
+      return { 
+        status: 'Absent', 
+        color: getStatusColor('Absent'), 
+        timeIn: 'Absent', 
+        timeOut: 'Absent',
+        isWorkDay: true,
+        timestamp: 0,
+        hoursWorked: '0h 0m',
+        source: 'system'
+      };
+    }
+    
     return { 
       status: 'Pending', 
       color: getStatusColor('Pending'), 
@@ -721,6 +739,22 @@ const AttendanceTable = ({
       source: 'system'
     };
   }, [isOnLeave, isWorkDay, selectedDate, localUpdates, attendance]);
+
+  const isWorkDayEnded = useCallback((employee) => {
+    const now = new Date();
+    const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' });
+    const schedule = employee.workSchedule[dayOfWeek];
+    
+    if (!schedule || !schedule.active || !schedule.end) {
+      return false;
+    }
+    
+    const [endHour, endMinute] = schedule.end.split(':').map(Number);
+    const workEndTime = new Date();
+    workEndTime.setHours(endHour, endMinute, 0, 0);
+    
+    return now > workEndTime;
+  }, []);
 
   const sortEmployees = useCallback((employees, attendanceList, config) => {
     return [...employees].sort((a, b) => {
